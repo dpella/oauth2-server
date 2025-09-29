@@ -103,7 +103,7 @@ USER root
 RUN --mount=type=cache,id=build-cache,uid=${UID},gid=${GID},target=/app/dist-newstyle \
     set -euo pipefail; \
     mkdir -p /artifacts/docs; \
-    cp -r $(find /app/dist-newstyle/build -type d -path '*/doc/html') /artifacts/docs;
+    find /app/dist-newstyle/build -type d -path '*/doc/html' -exec cp -r {} /artifacts/docs \;
 
 USER ${UID}:${GID}
 # Default command
