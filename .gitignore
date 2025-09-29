@@ -10,3 +10,5 @@ tags
 
 # Local cabal configuration should not be checked in
 cabal.project.local
+
+artifacts/
