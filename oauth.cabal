@@ -1,0 +1,101 @@
+cabal-version:      2.2
+name:               oauth
+version:            0.1.0.0
+license:            LicenseRef-AllRightsReserved
+author:             DPella AB
+maintainer:         matti@dpella.io,
+                    lobo@dpella.io
+synopsis:           OAuth 2.1 authorization server implementation
+description:
+  Provides a cohesive Servant implementation of the OAuth 2.1 surface, covering
+  discovery metadata, authorization and callback flows, token issuance, and dynamic
+  client registration. The package models authorization codes, refresh tokens, and
+  registered clients with PKCE enforcement, configurable persistence backends, and
+  secure token generation helpers. Combined servers share state through `MVar`s,
+  integrate with `servant-auth-server` to mint JWT access tokens, and expose ergonomic
+  helpers for embedding standards-compliant OAuth flows into Haskell applications.
+homepage:          https://github.com/DPella/oauth
+bug-reports:       https://github.com/DPella/oauth/issues
+category:          Web, Security
+
+library
+  default-language:
+    Haskell2010
+  default-extensions:
+      DataKinds
+    , FlexibleInstances
+    , GADTs
+    , GeneralizedNewtypeDeriving
+    , ImportQualifiedPost
+    , LambdaCase
+    , OverloadedStrings
+    , PolyKinds
+    , RankNTypes
+    , TypeApplications
+  hs-source-dirs:
+    src
+  exposed-modules:
+    OAuth
+    OAuth.Types
+  other-modules:
+    OAuth.TokenAPI
+    OAuth.AuthorizeAPI
+    OAuth.AuthorizeCallbackAPI
+    OAuth.RegisterAPI
+    OAuth.MetadataAPI
+  build-depends:
+      base >=4.18 && <4.19
+    , servant
+    , servant-server
+    , servant-auth-server
+    , servant-blaze
+    , text
+    , bytestring
+    , aeson
+    , containers
+    , time
+    , random
+    , blaze-html
+    , network-uri
+    , http-api-data
+    , cryptonite
+    , memory
+    , base64-bytestring
+
+
+test-suite test-oauth
+  type: exitcode-stdio-1.0
+  default-language:
+    Haskell2010
+  hs-source-dirs:
+    tests
+  main-is:
+    Main.hs
+  other-modules:
+    OAuth.FlowSpec
+    OAuth.TestUtils
+  build-depends:
+      base >=4.18 && <4.19
+    , oauth
+    , aeson
+    , text
+    , bytestring
+    , containers
+    , time
+    , tasty
+    , tasty-hunit
+    , tasty-quickcheck
+    , QuickCheck
+    , servant
+    , servant-server
+    , servant-auth-server
+    , wai
+    , wai-extra
+    , http-types
+    , http-client
+    , warp
+    , cryptonite
+    , memory
+    , base64-bytestring
+    , blaze-html
+    , blaze-markup
