@@ -20,5 +20,6 @@ program-options
     -Wall
     -Werror
     -Wno-unticked-promoted-constructors
+    -fhpc
 
   ghc-options:
