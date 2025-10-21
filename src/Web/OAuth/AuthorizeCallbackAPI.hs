@@ -23,7 +23,9 @@
 module Web.OAuth.AuthorizeCallbackAPI where
 
 import Control.Concurrent.MVar
+import Control.Monad (unless)
 import Control.Monad.IO.Class (liftIO)
+import Data.Aeson (encode)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -37,6 +39,7 @@ import Servant.Auth.Server (AuthResult (..))
 import Servant.HTML.Blaze
 import Text.Blaze.Html5 (Html)
 import Web.FormUrlEncoded (FromForm (..), parseMaybe, parseUnique)
+import Web.OAuth.AuthorizeAPI (validateScope)
 
 -- | Form data submitted from the OAuth login page.
 --
@@ -107,6 +110,22 @@ handleAuthorizeCallback state_var ctxt LoginForm{..} = do
   auth_user <- liftIO $ runFormAuth ctxt username password
   case auth_user of
     Authenticated user -> do
+      oauth_state <- liftIO $ readMVar state_var
+      registeredClient <-
+        case Map.lookup login_client_id (registered_clients oauth_state) of
+          Nothing -> unauthorizedClient
+          Just rc -> pure rc
+      unless (login_redirect_uri `elem` registered_client_redirect_uris registeredClient) $
+        invalidRequest "unauthorized_client" "Invalid redirect URI for client"
+      unless (validateScope login_scope (registered_client_scope registeredClient)) $
+        invalidRequest "invalid_scope" "Requested scope is not allowed for this client"
+      case login_code_challenge of
+        Nothing -> invalidRequest "invalid_request" "PKCE code_challenge required"
+        Just _ -> pure ()
+      let methodValid =
+            maybe True (`elem` ["plain", "S256"]) login_code_challenge_method
+      unless methodValid $
+        invalidRequest "invalid_request" "Unsupported code_challenge_method"
       auth_code <- liftIO generateToken
       current_time <- liftIO getCurrentTime
       let expiry = addUTCTime 600 current_time
@@ -167,5 +186,13 @@ handleAuthorizeCallback state_var ctxt LoginForm{..} = do
 
     encodeParam :: (Text, Text) -> Text
     encodeParam (key, value) =
-      let encode = T.pack . escapeURIString isUnescapedInURIComponent . T.unpack
-      in  encode key <> "=" <> encode value
+      let pctEncode = T.pack . escapeURIString isUnescapedInURIComponent . T.unpack
+      in  pctEncode key <> "=" <> pctEncode value
+
+    invalidRequest :: Text -> Text -> Handler a
+    invalidRequest errorCode errorDescription =
+      throwError err400{errBody = encode $ (oAuthError errorCode){error_description = Just errorDescription}}
+
+    unauthorizedClient :: Handler a
+    unauthorizedClient =
+      throwError err401{errBody = encode $ (oAuthError "unauthorized_client"){error_description = Just "Client not registered or invalid client_id"}}

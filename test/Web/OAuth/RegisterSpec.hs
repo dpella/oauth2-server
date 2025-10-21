@@ -28,6 +28,7 @@ tests =
     "Register endpoint"
     [ appliesDefaultsForPublicClients
     , issuesSecretForConfidentialClients
+    , honorsRequestedScope
     ]
 
 withApp :: (MVar (OAuthState TestUser) -> Application -> IO a) -> IO a
@@ -134,3 +135,29 @@ issuesSecretForConfidentialClients = testCase "returns secret for confidential r
       Just client -> do
         registered_client_secret client @?= Just secretField
         registered_client_token_endpoint_auth_method client @?= "client_secret_post"
+
+honorsRequestedScope :: TestTree
+honorsRequestedScope = testCase "persists provided scope field" $
+  withApp $ \stateVar app -> do
+    let customScope = "profile email"
+    res <-
+      registerClient
+        app
+        ( object
+            [ "client_name" .= ("Scoped App" :: Text)
+            , "redirect_uris" .= ["https://localhost/callback" :: Text]
+            , "scope" .= customScope
+            ]
+        )
+    simpleStatus res @?= status200
+    obj <- extractObject (simpleBody res)
+    case KM.lookup "scope" obj of
+      Just (String scopeVal) -> scopeVal @?= customScope
+      _ -> assertFailure "scope field missing in response"
+    case KM.lookup "client_id" obj of
+      Just (String cid) -> do
+        st <- readMVar stateVar
+        case Map.lookup cid (registered_clients st) of
+          Nothing -> assertFailure "registered client missing from state"
+          Just client -> registered_client_scope client @?= customScope
+      _ -> assertFailure "client_id missing in response"

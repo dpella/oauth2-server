@@ -54,7 +54,7 @@ data ClientRegistrationRequest = ClientRegistrationRequest
   -- ^ OAuth grant types the client will use (default: ["authorization_code", "refresh_token"])
   , response_types :: Maybe [Text]
   -- ^ OAuth response types the client will use (default: ["code"])
-  , scope_requested :: Maybe Text
+  , scope :: Maybe Text
   -- ^ Space-delimited list of scopes the client may request (default: "read write")
   , token_endpoint_auth_method :: Maybe Text
   -- ^ Client authentication method at token endpoint (default: "none")
@@ -124,7 +124,7 @@ handleRegister state_var ClientRegistrationRequest{..} = do
   client_id <- ("client_" <>) <$> liftIO generateToken
   let default_grant_types = fromMaybe ["authorization_code", "refresh_token"] grant_types
       default_response_types = fromMaybe ["code"] response_types
-      default_scope = fromMaybe "read write" scope_requested
+      default_scope = fromMaybe "read write" scope
       default_auth_method = fromMaybe "none" token_endpoint_auth_method
       -- For confidential clients, generate a secret
       secret = if default_auth_method /= "none" then Just <$> generateToken else pure Nothing

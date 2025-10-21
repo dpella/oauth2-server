@@ -52,7 +52,7 @@ returnsExpectedEndpoints = testCase "returns issuer and endpoints for default co
         KM.lookup "registration_endpoint" obj @?= Just (String "http://localhost:8080/register")
         case KM.lookup "token_endpoint_auth_methods_supported" obj of
           Just (Array arr) ->
-            toList arr @?= [String "none"]
+            toList arr @?= [String "none", String "client_secret_post"]
           _ -> assertFailure "token_endpoint_auth_methods_supported missing"
       _ -> assertFailure "metadata response not an object"
 

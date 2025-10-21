@@ -4,11 +4,13 @@
 module Web.OAuth.AuthorizeCallbackSpec (tests) where
 
 import Control.Concurrent.MVar (MVar, readMVar)
+import Data.Aeson (eitherDecode)
+import Data.ByteString.Lazy qualified as LBS
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Time.Clock (addUTCTime, getCurrentTime)
-import Network.HTTP.Types (hContentType, hLocation, methodPost, status303)
+import Network.HTTP.Types (hContentType, hLocation, methodPost, status303, status400)
 import Network.Wai (Application, requestHeaders, requestMethod)
 import Network.Wai.Test
 import Test.Tasty
@@ -22,6 +24,9 @@ tests =
     "Authorize callback endpoint"
     [ successfulLoginIssuesAuthCode
     , invalidCredentialsRedirectBack
+    , rejectsTamperedRedirectUri
+    , rejectsInvalidScope
+    , rejectsMissingPkce
     ]
 
 withApp :: (MVar (OAuthState TestUser) -> Application -> IO a) -> IO a
@@ -107,3 +112,91 @@ invalidCredentialsRedirectBack = testCase "redirects back to authorize with erro
 
     st <- readMVar stateVar
     Map.size (auth_codes st) @?= 0
+
+rejectsTamperedRedirectUri :: TestTree
+rejectsTamperedRedirectUri = testCase "rejects redirect_uri not registered for client" $
+  withApp $ \stateVar app -> do
+    let formBody =
+          encodeForm
+            [ ("username", "testuser")
+            , ("password", "testpass")
+            , ("client_id", "client-1")
+            , ("redirect_uri", "https://attacker.invalid/cb")
+            , ("scope", "read")
+            , ("state", "state-1")
+            , ("code_challenge", "challenge")
+            , ("code_challenge_method", "plain")
+            ]
+        req =
+          SRequest
+            ( setPath defaultRequest "/authorize/callback"
+                ){ requestMethod = methodPost
+                 , requestHeaders = [(hContentType, "application/x-www-form-urlencoded")]
+                 }
+            formBody
+    res <- runSession (srequest req) app
+    simpleStatus res @?= status400
+    err <- decodeError (simpleBody res)
+    Web.OAuth.Types.error err @?= "unauthorized_client"
+    st <- readMVar stateVar
+    Map.size (auth_codes st) @?= 0
+
+rejectsInvalidScope :: TestTree
+rejectsInvalidScope = testCase "rejects scope escalation attempts" $
+  withApp $ \stateVar app -> do
+    let formBody =
+          encodeForm
+            [ ("username", "testuser")
+            , ("password", "testpass")
+            , ("client_id", "client-1")
+            , ("redirect_uri", "http://localhost:4000/cb")
+            , ("scope", "admin")
+            , ("state", "state-2")
+            , ("code_challenge", "challenge")
+            , ("code_challenge_method", "plain")
+            ]
+        req =
+          SRequest
+            ( setPath defaultRequest "/authorize/callback"
+                ){ requestMethod = methodPost
+                 , requestHeaders = [(hContentType, "application/x-www-form-urlencoded")]
+                 }
+            formBody
+    res <- runSession (srequest req) app
+    simpleStatus res @?= status400
+    err <- decodeError (simpleBody res)
+    Web.OAuth.Types.error err @?= "invalid_scope"
+    st <- readMVar stateVar
+    Map.size (auth_codes st) @?= 0
+
+rejectsMissingPkce :: TestTree
+rejectsMissingPkce = testCase "rejects requests missing PKCE code_challenge" $
+  withApp $ \stateVar app -> do
+    let formBody =
+          encodeForm
+            [ ("username", "testuser")
+            , ("password", "testpass")
+            , ("client_id", "client-1")
+            , ("redirect_uri", "http://localhost:4000/cb")
+            , ("scope", "read")
+            , ("state", "state-3")
+            ]
+        req =
+          SRequest
+            ( setPath defaultRequest "/authorize/callback"
+                ){ requestMethod = methodPost
+                 , requestHeaders = [(hContentType, "application/x-www-form-urlencoded")]
+                 }
+            formBody
+    res <- runSession (srequest req) app
+    simpleStatus res @?= status400
+    err <- decodeError (simpleBody res)
+    Web.OAuth.Types.error err @?= "invalid_request"
+    st <- readMVar stateVar
+    Map.size (auth_codes st) @?= 0
+
+decodeError :: LBS.ByteString -> IO OAuthError
+decodeError body =
+  case eitherDecode body of
+    Left msg -> assertFailure ("Failed to decode OAuth error: " <> msg)
+    Right v -> pure v
