@@ -168,6 +168,7 @@ confidentialClientsRequireSecret = testCase "confidential clients must provide c
         )
     simpleStatus res @?= status401
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
+    lookup "WWW-Authenticate" (simpleHeaders res) @?= Just "Basic realm=\"oauth\""
     errResp <- decodeOAuthError (simpleBody res)
     Web.OAuth.Types.error errResp @?= "invalid_client"
     st <- readMVar stateVar
@@ -241,6 +242,7 @@ authorizationCodeSingleUseConcurrent = testCase "authorization codes cannot be r
     errResp <- decodeOAuthError (simpleBody failureRes)
     Web.OAuth.Types.error errResp @?= "invalid_grant"
     simpleStatus successRes @?= status200
+    assertNoStoreHeaders successRes
     stateAfter <- readMVar stateVar
     Map.member "code-concurrent" (auth_codes stateAfter) @?= False
 
@@ -271,6 +273,7 @@ refreshTokenSingleUseConcurrent = testCase "refresh tokens rotate under concurre
     errResp <- decodeOAuthError (simpleBody failureRes)
     Web.OAuth.Types.error errResp @?= "invalid_grant"
     simpleStatus successRes @?= status200
+    assertNoStoreHeaders successRes
     successValue <-
       case eitherDecode (simpleBody successRes) :: Either String Value of
         Left err -> assertFailure ("Failed to decode success token response: " <> err)
@@ -289,3 +292,8 @@ refreshTokenSingleUseConcurrent = testCase "refresh tokens rotate under concurre
     assertBool "old refresh token removed" (isNothing oldToken)
     newToken <- lookupRefreshToken persistence newRefresh
     assertBool "new refresh token persisted" (isJust newToken)
+
+assertNoStoreHeaders :: SResponse -> Assertion
+assertNoStoreHeaders res = do
+  lookup "Cache-Control" (simpleHeaders res) @?= Just "no-store"
+  lookup "Pragma" (simpleHeaders res) @?= Just "no-cache"

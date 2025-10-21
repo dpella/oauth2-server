@@ -2,6 +2,7 @@
 
 # Unreleased
 ## Security
+- Token endpoint responses now include `Cache-Control: no-store` and `Pragma: no-cache`, preventing intermediaries from caching bearer tokens.
 - Authorization login form no longer fabricates an empty `state` value; parameters are only echoed when provided by the client, preserving CSRF protection for state-less callers.
 - Dynamic client registration now enforces absolute redirect URIs (https-only except localhost loopback) and rejects fragment-bearing or empty lists, preventing misconfigurations that lead to insecure redirects.
 - Replaced predictable `StdGen` token generator with Base64URL-encoded output sourced from `cryptonite`'s `getRandomBytes`, ensuring authorization codes, refresh tokens, and client secrets draw from strong entropy.
@@ -10,6 +11,9 @@
 - Authorization code redemption inside the token endpoint now executes under a single state lock, preventing concurrent exchanges from reusing the same code.
 - Refresh token rotation is now atomic, stopping concurrent refresh requests from returning multiple valid tokens for the same handle.
 ## Fixed
+- Dynamic client registration omits `client_secret` and `client_secret_expires_at` when no secret is issued, matching RFC 7591 expectations.
+- Registration now rejects unsupported `token_endpoint_auth_method` values instead of provisioning unusable clients.
+- Token endpoint `invalid_client` responses include a `WWW-Authenticate` challenge so OAuth clients can discover the required authentication scheme.
 - Authorization endpoint now emits OAuth error responses via 303 redirects to the validated `redirect_uri`, including the original `state` when present, so clients receive spec-compliant failure notifications.
 - Authorization callback now performs RFC-compliant 303 redirects with correctly constructed `Location` headers instead of relying on HTML meta refresh, preserving existing redirect URI queries and fragments.
 - Discovery metadata now preserves the configured base URL, appending the OAuth server port only when absent and constructing endpoint paths without producing malformed `host:port:port` strings.

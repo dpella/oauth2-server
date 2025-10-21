@@ -96,17 +96,17 @@ data ClientRegistrationResponse = ClientRegistrationResponse
 
 instance ToJSON ClientRegistrationResponse where
   toJSON ClientRegistrationResponse{..} =
-    object
+    object $
       [ "client_id" .= reg_client_id
       , "client_name" .= reg_client_name
-      , "client_secret" .= reg_client_secret
-      , "client_secret_expires_at" .= reg_client_secret_expires_at
       , "redirect_uris" .= reg_redirect_uris
       , "grant_types" .= reg_grant_types
       , "response_types" .= reg_response_types
       , "scope" .= reg_scope
       , "token_endpoint_auth_method" .= reg_token_endpoint_auth_method
       ]
+        <> maybe [] (\secret -> ["client_secret" .= secret]) reg_client_secret
+        <> maybe [] (\expiry -> ["client_secret_expires_at" .= expiry]) reg_client_secret_expires_at
 
 -- | Handle dynamic client registration requests.
 --
@@ -125,6 +125,7 @@ instance ToJSON ClientRegistrationResponse where
 handleRegister :: forall usr. MVar (OAuthState usr) -> ClientRegistrationRequest -> Handler ClientRegistrationResponse
 handleRegister state_var ClientRegistrationRequest{..} = do
   let default_auth_method = fromMaybe "none" token_endpoint_auth_method
+  validateAuthMethod default_auth_method
   validateRedirectUris redirect_uris
   client_id <- ("client_" <>) <$> liftIO generateToken
   let default_grant_types = fromMaybe ["authorization_code", "refresh_token"] grant_types
@@ -164,6 +165,11 @@ handleRegister state_var ClientRegistrationRequest{..} = do
       , reg_token_endpoint_auth_method = default_auth_method
       }
   where
+    validateAuthMethod :: Text -> Handler ()
+    validateAuthMethod method =
+      when (method `notElem` ["none", "client_secret_post"]) $
+        invalidMetadata "Unsupported token_endpoint_auth_method; expected \"none\" or \"client_secret_post\""
+
     validateRedirectUris :: [Text] -> Handler ()
     validateRedirectUris uris = do
       when (null uris) $

@@ -45,6 +45,7 @@ import Servant
 import Servant.Auth.Server
 import Web.FormUrlEncoded (FromForm (..))
 import Prelude hiding (error)
+import Data.ByteString.Char8 qualified as BS8
 
 -- | Servant API type for the OAuth token endpoint.
 --
@@ -53,7 +54,9 @@ import Prelude hiding (error)
 type TokenAPI =
   "token"
     :> ReqBody '[FormUrlEncoded] TokenRequest
-    :> Post '[JSON] TokenResponse
+    :> Post
+        '[JSON]
+        (Headers '[Header "Cache-Control" Text, Header "Pragma" Text] TokenResponse)
 
 -- | Token request parameters as defined in RFC 6749.
 --
@@ -123,13 +126,15 @@ instance ToJSON TokenResponse where
 --
 -- Access tokens are JWTs signed by DPella with 1-hour expiry.
 -- Authorization codes expire after 10 minutes.
+type TokenResponseHeaders = Headers '[Header "Cache-Control" Text, Header "Pragma" Text] TokenResponse
+
 handleTokenRequest
   :: forall usr ctxt
    . (ToJWT usr, HasContextEntry ctxt JWTSettings)
   => MVar (OAuthState usr)
   -> Context ctxt
   -> TokenRequest
-  -> Handler TokenResponse
+  -> Handler TokenResponseHeaders
 handleTokenRequest state_var ctxt TokenRequest{..} = do
   let jwtCfg = getContextEntry ctxt
   result <-
@@ -138,8 +143,14 @@ handleTokenRequest state_var ctxt TokenRequest{..} = do
         processRequest jwtCfg state
   case result of
     Left err -> throwError err
-    Right resp -> pure resp
+    Right resp -> pure (attachNoStoreHeaders resp)
   where
+    attachNoStoreHeaders :: TokenResponse -> TokenResponseHeaders
+    attachNoStoreHeaders resp =
+      let withPragma :: Headers '[Header "Pragma" Text] TokenResponse
+          withPragma = addHeader ("no-cache" :: Text) resp
+      in  addHeader ("no-store" :: Text) withPragma
+
     processRequest
       :: JWTSettings
       -> OAuthState usr
@@ -330,8 +341,16 @@ handleTokenRequest state_var ctxt TokenRequest{..} = do
 
     tokenAuthFailure :: Text -> Text -> ServerError
     tokenAuthFailure error_code error_description =
-      oauthErrorResponse err401 error_code (Just error_description)
+      addAuthChallenge $
+        oauthErrorResponse err401 error_code (Just error_description)
 
     internalServerError :: Text -> ServerError
     internalServerError message =
       oauthErrorResponse err500 "server_error" (Just message)
+
+    addAuthChallenge :: ServerError -> ServerError
+    addAuthChallenge err =
+      let headerName = "WWW-Authenticate"
+          challengeHeader = (headerName, BS8.pack "Basic realm=\"oauth\"")
+          filteredHeaders = filter ((/= headerName) . fst) (errHeaders err)
+      in  err{errHeaders = challengeHeader : filteredHeaders}

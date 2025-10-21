@@ -32,6 +32,7 @@ tests =
     , rejectsEmptyRedirectUris
     , rejectsRelativeRedirectUris
     , rejectsInsecureRedirectUris
+    , rejectsUnsupportedAuthMethod
     ]
 
 withApp :: (MVar (OAuthState TestUser) -> Application -> IO a) -> IO a
@@ -95,8 +96,8 @@ appliesDefaultsForPublicClients = testCase "fills defaults for omitted fields" $
     responses @?= ["code"]
     scopeVal <- getTextField "scope"
     scopeVal @?= "read write"
-    KM.lookup "client_secret" obj @?= Just Null
-    KM.lookup "client_secret_expires_at" obj @?= Just Null
+    KM.lookup "client_secret" obj @?= Nothing
+    KM.lookup "client_secret_expires_at" obj @?= Nothing
 
     st <- readMVar stateVar
     case Map.lookup clientId (registered_clients st) of
@@ -180,6 +181,22 @@ rejectsEmptyRedirectUris = testCase "rejects registrations without redirect URIs
         ( object
             [ "client_name" .= ("No Redirects" :: Text)
             , "redirect_uris" .= ([] :: [Text])
+            ]
+        )
+    simpleStatus res @?= status400
+    err <- decodeRegistrationError (simpleBody res)
+    Web.OAuth.Types.error err @?= "invalid_client_metadata"
+
+rejectsUnsupportedAuthMethod :: TestTree
+rejectsUnsupportedAuthMethod = testCase "rejects token auth methods the server cannot fulfill" $
+  withApp $ \_ app -> do
+    res <-
+      registerClient
+        app
+        ( object
+            [ "client_name" .= ("Bad Auth" :: Text)
+            , "redirect_uris" .= ["https://localhost/callback" :: Text]
+            , "token_endpoint_auth_method" .= ("client_secret_basic" :: Text)
             ]
         )
     simpleStatus res @?= status400
