@@ -24,6 +24,8 @@
 - The authorize endpoint now returns RFC-compliant `invalid_request` or `unsupported_response_type` errors when callers omit or mis-state required parameters.
 - Authorization code exchanges no longer mint refresh tokens for clients that omit the `refresh_token` grant, aligning runtime behaviour with registered capabilities.
 - Confidential client registrations now leave `client_secret_expires_at` unset for non-expiring secrets instead of reporting an immediately expired timestamp.
+- Dynamic client registration replies with HTTP 201 Created, returning `registration_access_token` and `registration_client_uri` alongside the client metadata so RFC 7591 clients can manage their registrations.
+- Authorization server metadata now reports the union of scopes registered by clients, ensuring discovery reflects dynamically configured scope values.
 
 ## Changed
 - Source module headers now declare the MPL-2.0 license to match the package manifest.

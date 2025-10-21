@@ -26,10 +26,11 @@ module Web.OAuth.MetadataAPI where
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson
+import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import GHC.Generics
-import Network.URI
 import Servant
 import Web.OAuth.Types
 
@@ -82,6 +83,14 @@ handleMetadata state_var = do
   OAuthState{..} <- liftIO $ readMVar state_var
   let baseUrl = normalizeBaseUrl oauth_url oauth_port
       baseForPaths = stripTrailingSlash baseUrl
+      scopeTokens =
+        Set.toList $
+          Set.fromList $
+            concatMap (T.words . registered_client_scope) (Map.elems registered_clients)
+      scopesSupported =
+        if null scopeTokens
+          then ["read", "write"]
+          else scopeTokens
   return $
     OAuthMetadata
       { issuer = baseUrl
@@ -92,47 +101,5 @@ handleMetadata state_var = do
       , response_types_supported = ["code"]
       , token_endpoint_auth_methods_supported = ["none", "client_secret_post"]
       , code_challenge_methods_supported = ["S256", "plain"]
-      , scopes_supported = ["read", "write"]
+      , scopes_supported = scopesSupported
       }
-  where
-    normalizeBaseUrl :: Text -> Int -> Text
-    normalizeBaseUrl rawUrl port =
-      case parseURI (T.unpack rawUrl) of
-        Just uri ->
-          case uriAuthority uri of
-            Just auth ->
-              let hasPort = not (null (uriPort auth))
-                  desiredPort = if port > 0 then ":" <> show port else ""
-                  authWithPort =
-                    if hasPort || null desiredPort
-                      then auth
-                      else auth{uriPort = desiredPort}
-                  normalizedUri = uri{uriAuthority = Just authWithPort}
-              in  T.pack (uriToString id normalizedUri "")
-            Nothing -> appendPortFallback rawUrl port
-        Nothing -> appendPortFallback rawUrl port
-
-    appendPortFallback :: Text -> Int -> Text
-    appendPortFallback rawUrl port =
-      let portTxt = ":" <> T.pack (show port)
-      in  if port <= 0 || portTxt `T.isInfixOf` rawUrl
-            then rawUrl
-            else
-              let (prefix, suffix) = T.breakOn "/" rawUrl
-              in  if T.null suffix
-                    then rawUrl <> portTxt
-                    else prefix <> portTxt <> suffix
-
-    stripTrailingSlash :: Text -> Text
-    stripTrailingSlash txt =
-      T.dropWhileEnd (== '/') txt
-
-    appendPathSegment :: Text -> Text -> Text
-    appendPathSegment base segment =
-      let (baseWithoutFragment, fragmentPart) = T.breakOn "#" base
-          baseStripped =
-            if T.null baseWithoutFragment
-              then baseWithoutFragment
-              else T.dropWhileEnd (== '/') baseWithoutFragment
-          combined = baseStripped <> segment
-      in  combined <> fragmentPart

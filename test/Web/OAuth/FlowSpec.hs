@@ -23,7 +23,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Time.Clock
-import Network.HTTP.Types (hContentType, hLocation, methodPost, status200, status303)
+import Network.HTTP.Types (hContentType, hLocation, methodPost, status200, status201, status303)
 import Network.Wai (requestHeaders, requestMethod)
 import Network.Wai.Test
 import Servant
@@ -69,6 +69,9 @@ commonFlow = testCase "Dynamic registration -> authorize -> token -> refresh" $ 
   case KM.lookup "token_endpoint_auth_methods_supported" metadataObj of
     Just (Array arr) -> toList arr @?= [String "none", String "client_secret_post"]
     _ -> abort "token_endpoint_auth_methods_supported missing"
+  case KM.lookup "scopes_supported" metadataObj of
+    Just (Array arr) -> toList arr @?= [String "read", String "write"]
+    _ -> abort "scopes_supported missing"
 
   let redirectUri = "http://localhost:4000/cb"
   regResponsePublic <-
@@ -91,7 +94,7 @@ commonFlow = testCase "Dynamic registration -> authorize -> token -> refresh" $ 
                     }
                   (Aeson.encode body)
           res <- srequest req
-          liftIO $ assertEqual "register status" status200 (simpleStatus res)
+          liftIO $ assertEqual "register status" status201 (simpleStatus res)
           case eitherDecode (simpleBody res) :: Either String Value of
             Left e -> abort e
             Right v -> pure v
@@ -99,8 +102,12 @@ commonFlow = testCase "Dynamic registration -> authorize -> token -> refresh" $ 
       app
   publicObj <- valueToObject regResponsePublic
   clientId <- lookupTextFromObject "client_id" publicObj
+  registrationToken <- lookupTextFromObject "registration_access_token" publicObj
+  registrationUri <- lookupTextFromObject "registration_client_uri" publicObj
   assertBool "public client secret omitted" (KM.lookup "client_secret" publicObj == Nothing)
   assertBool "public client secret expiry omitted" (KM.lookup "client_secret_expires_at" publicObj == Nothing)
+  assertBool "registration access token present" (not (T.null registrationToken))
+  assertBool "registration client URI includes register path" ("/register/" `T.isInfixOf` registrationUri)
 
   st1 <- readMVar stateVar
   case Map.lookup clientId (registered_clients st1) of
@@ -108,6 +115,7 @@ commonFlow = testCase "Dynamic registration -> authorize -> token -> refresh" $ 
     Just c -> do
       registered_client_token_endpoint_auth_method c @?= "none"
       registered_client_grant_types c @?= ["authorization_code", "refresh_token"]
+      registered_client_registration_access_token c @?= Just registrationToken
 
   now <- getCurrentTime
   verifier <- pure "verifier-value"

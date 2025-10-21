@@ -118,6 +118,7 @@ mkRegisteredClient clientId redirects grants responses scope tokenMethod secret 
     , registered_client_response_types = responses
     , registered_client_scope = scope
     , registered_client_token_endpoint_auth_method = tokenMethod
+    , registered_client_registration_access_token = Nothing
     }
 
 mkPublicClient :: Text -> [Text] -> Text -> RegisteredClient

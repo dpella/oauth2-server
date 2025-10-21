@@ -27,10 +27,12 @@ import Data.Aeson (defaultOptions, encode, omitNothingFields)
 import Data.Aeson.TH (deriveJSON)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
+import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Time.Clock
 import GHC.Generics
 import Network.HTTP.Types (hContentType)
+import Network.URI
 import Servant (Context, HasContextEntry)
 import Servant.Auth.Server (AuthResult (..))
 import Servant.Server (ServerError (..))
@@ -121,6 +123,8 @@ data RegisteredClient = RegisteredClient
   -- ^ Maximum scope this registered_client can request
   , registered_client_token_endpoint_auth_method :: Text
   -- ^ Required auth method at token endpoint
+  , registered_client_registration_access_token :: Maybe Text
+  -- ^ Registration access token issued for dynamic client management
   }
   deriving (Eq, Show)
 
@@ -208,6 +212,50 @@ generateToken :: IO Token
 generateToken = do
   bytes <- getRandomBytes 32
   pure $ TE.decodeUtf8 (B64URL.encodeUnpadded bytes)
+
+-- | Normalize the configured base URL ensuring the desired port is present.
+normalizeBaseUrl :: Text -> Int -> Text
+normalizeBaseUrl rawUrl port =
+  case parseURI (T.unpack rawUrl) of
+    Just uri ->
+      case uriAuthority uri of
+        Just auth ->
+          let hasPort = not (null (uriPort auth))
+              desiredPort = if port > 0 then ":" <> show port else ""
+              authWithPort =
+                if hasPort || null desiredPort
+                  then auth
+                  else auth{uriPort = desiredPort}
+              normalizedUri = uri{uriAuthority = Just authWithPort}
+          in  T.pack (uriToString id normalizedUri "")
+        Nothing -> appendPortFallback rawUrl port
+    Nothing -> appendPortFallback rawUrl port
+  where
+    appendPortFallback :: Text -> Int -> Text
+    appendPortFallback url port' =
+      let portTxt = ":" <> T.pack (show port')
+      in  if port' <= 0 || portTxt `T.isInfixOf` url
+            then url
+            else
+              let (prefix, suffix) = T.breakOn "/" url
+              in  if T.null suffix
+                    then url <> portTxt
+                    else prefix <> portTxt <> suffix
+
+-- | Remove any trailing '/' from a URL.
+stripTrailingSlash :: Text -> Text
+stripTrailingSlash = T.dropWhileEnd (== '/')
+
+-- | Append a path segment to a base URL, preserving fragments.
+appendPathSegment :: Text -> Text -> Text
+appendPathSegment base segment =
+  let (baseWithoutFragment, fragmentPart) = T.breakOn "#" base
+      baseStripped =
+        if T.null baseWithoutFragment
+          then baseWithoutFragment
+          else T.dropWhileEnd (== '/') baseWithoutFragment
+      combined = baseStripped <> segment
+  in  combined <> fragmentPart
 
 -- | Class for verifying user credentials from username and password
 class FormAuth usr where

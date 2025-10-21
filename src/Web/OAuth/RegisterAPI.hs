@@ -41,7 +41,7 @@ import Servant
 type RegisterAPI =
   "register"
     :> ReqBody '[JSON] ClientRegistrationRequest
-    :> Post '[JSON] ClientRegistrationResponse
+    :> PostCreated '[JSON] ClientRegistrationResponse
 
 -- | Request payload for dynamic client registration.
 --
@@ -91,6 +91,10 @@ data ClientRegistrationResponse = ClientRegistrationResponse
   -- ^ Maximum scope this client can request
   , reg_token_endpoint_auth_method :: Text
   -- ^ Required authentication method at token endpoint
+  , reg_registration_access_token :: Text
+  -- ^ Registration access token for subsequent client management
+  , reg_registration_client_uri :: Text
+  -- ^ URI where the client configuration can be managed
   }
   deriving (Eq, Show, Generic)
 
@@ -104,6 +108,8 @@ instance ToJSON ClientRegistrationResponse where
       , "response_types" .= reg_response_types
       , "scope" .= reg_scope
       , "token_endpoint_auth_method" .= reg_token_endpoint_auth_method
+      , "registration_access_token" .= reg_registration_access_token
+      , "registration_client_uri" .= reg_registration_client_uri
       ]
         <> maybe [] (\secret -> ["client_secret" .= secret]) reg_client_secret
         <> maybe [] (\expiry -> ["client_secret_expires_at" .= expiry]) reg_client_secret_expires_at
@@ -124,16 +130,21 @@ instance ToJSON ClientRegistrationResponse where
 -- The client_id is generated using a secure random token generator.
 handleRegister :: forall usr. MVar (OAuthState usr) -> ClientRegistrationRequest -> Handler ClientRegistrationResponse
 handleRegister state_var ClientRegistrationRequest{..} = do
+  OAuthState{oauth_url = rawBaseUrl, oauth_port = basePort} <- liftIO $ readMVar state_var
   let default_auth_method = fromMaybe "none" token_endpoint_auth_method
   validateAuthMethod default_auth_method
   validateRedirectUris redirect_uris
   client_id <- ("client_" <>) <$> liftIO generateToken
+  registration_access_token <- liftIO generateToken
   let default_grant_types = fromMaybe ["authorization_code", "refresh_token"] grant_types
       default_response_types = fromMaybe ["code"] response_types
       default_scope = fromMaybe "read write" scope
       -- For confidential clients, generate a secret
       secret = if default_auth_method /= "none" then Just <$> generateToken else pure Nothing
   secret' <- liftIO secret
+  let baseUrl = normalizeBaseUrl rawBaseUrl basePort
+      baseForPaths = stripTrailingSlash baseUrl
+      registration_client_uri = appendPathSegment baseForPaths ("/register/" <> client_id)
   let new_client =
         RegisteredClient
           { registered_client_id = client_id
@@ -144,6 +155,7 @@ handleRegister state_var ClientRegistrationRequest{..} = do
           , registered_client_response_types = default_response_types
           , registered_client_scope = default_scope
           , registered_client_token_endpoint_auth_method = default_auth_method
+          , registered_client_registration_access_token = Just registration_access_token
           }
 
   liftIO $ modifyMVar_ state_var $ \s ->
@@ -163,6 +175,8 @@ handleRegister state_var ClientRegistrationRequest{..} = do
       , reg_response_types = default_response_types
       , reg_scope = default_scope
       , reg_token_endpoint_auth_method = default_auth_method
+      , reg_registration_access_token = registration_access_token
+      , reg_registration_client_uri = registration_client_uri
       }
   where
     validateAuthMethod :: Text -> Handler ()

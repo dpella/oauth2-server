@@ -13,7 +13,7 @@ import Data.Foldable (toList)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
-import Network.HTTP.Types (hContentType, methodPost, status200, status400)
+import Network.HTTP.Types (hContentType, methodPost, status200, status201, status400)
 import Network.Wai (Application, requestHeaders, requestMethod)
 import Network.Wai.Test
 import Test.Tasty
@@ -27,6 +27,7 @@ tests =
     "Register endpoint"
     [ appliesDefaultsForPublicClients
     , issuesSecretForConfidentialClients
+    , exposesManagementCredentials
     , honorsRequestedScope
     , rejectsEmptyRedirectUris
     , rejectsRelativeRedirectUris
@@ -74,7 +75,7 @@ appliesDefaultsForPublicClients = testCase "fills defaults for omitted fields" $
             , "redirect_uris" .= ["http://localhost:4000/callback" :: Text]
             ]
         )
-    simpleStatus res @?= status200
+    simpleStatus res @?= status201
     obj <- extractObject (simpleBody res)
     let getTextField key =
           case KM.lookup key obj of
@@ -95,6 +96,10 @@ appliesDefaultsForPublicClients = testCase "fills defaults for omitted fields" $
     responses @?= ["code"]
     scopeVal <- getTextField "scope"
     scopeVal @?= "read write"
+    regToken <- getTextField "registration_access_token"
+    assertBool "registration_access_token non-empty" (not (T.null regToken))
+    regUri <- getTextField "registration_client_uri"
+    assertBool "registration_client_uri includes client id" (clientId `T.isInfixOf` regUri)
     assertBool "client_secret absent" (KM.lookup "client_secret" obj == Nothing)
     assertBool "client_secret_expires_at absent" (KM.lookup "client_secret_expires_at" obj == Nothing)
 
@@ -103,6 +108,7 @@ appliesDefaultsForPublicClients = testCase "fills defaults for omitted fields" $
       Just c -> do
         registered_client_grant_types c @?= ["authorization_code", "refresh_token"]
         registered_client_secret c @?= Nothing
+        registered_client_registration_access_token c @?= Just regToken
       Nothing -> assertFailure "Client not persisted in state"
 
 issuesSecretForConfidentialClients :: TestTree
@@ -118,7 +124,7 @@ issuesSecretForConfidentialClients = testCase "returns secret for confidential r
             , "token_endpoint_auth_method" .= ("client_secret_post" :: Text)
             ]
         )
-    simpleStatus res @?= status200
+    simpleStatus res @?= status201
     obj <- extractObject (simpleBody res)
     secretField <-
       case KM.lookup "client_secret" obj of
@@ -131,6 +137,10 @@ issuesSecretForConfidentialClients = testCase "returns secret for confidential r
         Just (String cid) -> pure cid
         _ -> assertFailure "client_id missing"
     assertBool "secret non-empty" (not (T.null secretField))
+    registrationToken <-
+      case KM.lookup "registration_access_token" obj of
+        Just (String tok) -> pure tok
+        _ -> assertFailure "registration_access_token missing"
 
     st <- readMVar stateVar
     case Map.lookup clientId (registered_clients st) of
@@ -138,6 +148,39 @@ issuesSecretForConfidentialClients = testCase "returns secret for confidential r
       Just client -> do
         registered_client_secret client @?= Just secretField
         registered_client_token_endpoint_auth_method client @?= "client_secret_post"
+        registered_client_registration_access_token client @?= Just registrationToken
+
+exposesManagementCredentials :: TestTree
+exposesManagementCredentials = testCase "includes management token and URI in response" $
+  withApp $ \stateVar app -> do
+    res <-
+      registerClient
+        app
+        ( object
+            [ "client_name" .= ("Management App" :: Text)
+            , "redirect_uris" .= ["http://localhost:4000/callback" :: Text]
+            ]
+        )
+    simpleStatus res @?= status201
+    obj <- extractObject (simpleBody res)
+    clientId <-
+      case KM.lookup "client_id" obj of
+        Just (String cid) -> pure cid
+        _ -> assertFailure "client_id missing"
+    managementToken <-
+      case KM.lookup "registration_access_token" obj of
+        Just (String tok) -> pure tok
+        _ -> assertFailure "registration_access_token missing"
+    managementUri <-
+      case KM.lookup "registration_client_uri" obj of
+        Just (String uriTxt) -> pure uriTxt
+        _ -> assertFailure "registration_client_uri missing"
+    managementUri @?= "http://localhost:8080/register/" <> clientId
+    st <- readMVar stateVar
+    case Map.lookup clientId (registered_clients st) of
+      Nothing -> assertFailure "Client not persisted"
+      Just client ->
+        registered_client_registration_access_token client @?= Just managementToken
 
 honorsRequestedScope :: TestTree
 honorsRequestedScope = testCase "persists provided scope field" $
@@ -152,7 +195,7 @@ honorsRequestedScope = testCase "persists provided scope field" $
             , "scope" .= customScope
             ]
         )
-    simpleStatus res @?= status200
+    simpleStatus res @?= status201
     obj <- extractObject (simpleBody res)
     case KM.lookup "scope" obj of
       Just (String scopeVal) -> scopeVal @?= customScope
@@ -163,6 +206,23 @@ honorsRequestedScope = testCase "persists provided scope field" $
         case Map.lookup cid (registered_clients st) of
           Nothing -> assertFailure "registered client missing from state"
           Just client -> registered_client_scope client @?= customScope
+        metadataRes <-
+          runSession
+            ( srequest
+                (SRequest (setPath defaultRequest "/.well-known/oauth-authorization-server") LBS.empty)
+            )
+            app
+        simpleStatus metadataRes @?= status200
+        metadataObj <-
+          case eitherDecode (simpleBody metadataRes) of
+            Left err -> assertFailure ("Failed to decode metadata: " <> err)
+            Right (Object o) -> pure o
+            Right _ -> assertFailure "Metadata response not an object"
+        case KM.lookup "scopes_supported" metadataObj of
+          Just (Array arr) ->
+            let scopes = [t | String t <- toList arr]
+            in  assertBool "metadata scopes include custom scope tokens" (all (`elem` scopes) (T.words customScope))
+          _ -> assertFailure "scopes_supported missing from metadata"
       _ -> assertFailure "client_id missing in response"
 
 rejectsEmptyRedirectUris :: TestTree
