@@ -8,7 +8,7 @@ import Control.Concurrent.MVar (MVar)
 import Data.Aeson (eitherDecode)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
-import Network.HTTP.Types (status200, status400, status401)
+import Network.HTTP.Types (hContentType, status200, status400, status401)
 import Network.HTTP.Types.URI (renderQuery)
 import Network.Wai (Application)
 import Network.Wai.Test
@@ -26,6 +26,7 @@ tests =
     , rejectsInvalidScope
     , rendersLoginFormWithPkce
     , echoesErrorMessage
+    , missingParametersReturnInvalidRequest
     ]
 
 withApp :: (MVar (OAuthState TestUser) -> Application -> IO a) -> IO a
@@ -55,6 +56,7 @@ rejectsUnknownClient = testCase "returns 401 for unknown client_id" $
         (srequest (SRequest (setPath defaultRequest path) LBS.empty))
         app
     simpleStatus res @?= status401
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- reconstructError (simpleBody res)
     Web.OAuth.Types.error errResp @?= "unauthorized_client"
 
@@ -75,6 +77,7 @@ rejectsMismatchedRedirect = testCase "400 when redirect_uri not registered" $
         (srequest (SRequest (setPath defaultRequest path) LBS.empty))
         app
     simpleStatus res @?= status400
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- reconstructError (simpleBody res)
     Web.OAuth.Types.error errResp @?= "unauthorized_client"
 
@@ -95,6 +98,7 @@ rejectsInvalidScope = testCase "400 when scope exceeds client allow list" $
         (srequest (SRequest (setPath defaultRequest path) LBS.empty))
         app
     simpleStatus res @?= status400
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- reconstructError (simpleBody res)
     Web.OAuth.Types.error errResp @?= "invalid_scope"
 
@@ -142,3 +146,15 @@ echoesErrorMessage = testCase "renders login form with error message when provid
     simpleStatus res @?= status200
     let bodyTxt = LBS.toStrict (simpleBody res)
     assertBool "error message rendered" ("Invalid username or password" `BS.isInfixOf` bodyTxt)
+
+missingParametersReturnInvalidRequest :: TestTree
+missingParametersReturnInvalidRequest = testCase "returns JSON invalid_request when required params absent" $
+  withApp $ \_ app -> do
+    res <-
+      runSession
+        (srequest (SRequest (setPath defaultRequest "/authorize") LBS.empty))
+        app
+    simpleStatus res @?= status400
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
+    errResp <- reconstructError (simpleBody res)
+    Web.OAuth.Types.error errResp @?= "invalid_request"

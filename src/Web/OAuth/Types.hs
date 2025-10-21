@@ -23,15 +23,17 @@
 module Web.OAuth.Types where
 
 import Control.Concurrent.MVar (modifyMVar_, newMVar, readMVar)
-import Data.Aeson (defaultOptions, omitNothingFields)
+import Data.Aeson (defaultOptions, encode, omitNothingFields)
 import Data.Aeson.TH (deriveJSON)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text.Encoding qualified as TE
 import Data.Time.Clock
 import GHC.Generics
+import Network.HTTP.Types (hContentType)
 import Servant (Context, HasContextEntry)
 import Servant.Auth.Server (AuthResult (..))
+import Servant.Server (ServerError (..))
 import Crypto.Random (getRandomBytes)
 import Data.ByteString.Base64.URL qualified as B64URL
 
@@ -164,6 +166,21 @@ $( deriveJSON
 -- and 'Nothing' for the optional description and URI fields.
 oAuthError :: Text -> OAuthError
 oAuthError err = OAuthError err Nothing Nothing
+
+-- | Attach an OAuthError JSON payload to a Servant ServerError.
+jsonErrorResponse :: ServerError -> OAuthError -> ServerError
+jsonErrorResponse base oauthErr =
+  let contentHeader = (hContentType, "application/json; charset=utf-8")
+      filteredHeaders = filter ((/= hContentType) . fst) (errHeaders base)
+  in  base
+        { errBody = encode oauthErr
+        , errHeaders = contentHeader : filteredHeaders
+        }
+
+-- | Convenience helper to build a JSON OAuth error response.
+oauthErrorResponse :: ServerError -> Text -> Maybe Text -> ServerError
+oauthErrorResponse base code description =
+  jsonErrorResponse base (oAuthError code){error_description = description}
 
 -- | Initialize an empty OAuth server state.
 --

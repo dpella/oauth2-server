@@ -136,6 +136,7 @@ rejectsTamperedRedirectUri = testCase "rejects redirect_uri not registered for c
             formBody
     res <- runSession (srequest req) app
     simpleStatus res @?= status400
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     err <- decodeError (simpleBody res)
     Web.OAuth.Types.error err @?= "unauthorized_client"
     st <- readMVar stateVar
@@ -164,6 +165,7 @@ rejectsInvalidScope = testCase "rejects scope escalation attempts" $
             formBody
     res <- runSession (srequest req) app
     simpleStatus res @?= status400
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     err <- decodeError (simpleBody res)
     Web.OAuth.Types.error err @?= "invalid_scope"
     st <- readMVar stateVar
@@ -190,6 +192,7 @@ rejectsMissingPkce = testCase "rejects requests missing PKCE code_challenge" $
             formBody
     res <- runSession (srequest req) app
     simpleStatus res @?= status400
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     err <- decodeError (simpleBody res)
     Web.OAuth.Types.error err @?= "invalid_request"
     st <- readMVar stateVar

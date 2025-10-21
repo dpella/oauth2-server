@@ -5,12 +5,16 @@
 - Replaced predictable `StdGen` token generator with Base64URL-encoded output sourced from `cryptonite`'s `getRandomBytes`, ensuring authorization codes, refresh tokens, and client secrets draw from strong entropy.
 - Registration endpoint now returns `client_secret` (and expiry metadata) for confidential clients so freshly issued credentials can be retrieved immediately.
 - Authorization callback revalidates registered clients, redirect URIs, scopes, and PKCE parameters before minting authorization codes, closing the tampering vector that allowed arbitrary redirect destinations and scope escalation.
+- Authorization code redemption inside the token endpoint now executes under a single state lock, preventing concurrent exchanges from reusing the same code.
+- Refresh token rotation is now atomic, stopping concurrent refresh requests from returning multiple valid tokens for the same handle.
 ## Fixed
 - Authorization callback now performs RFC-compliant 303 redirects with correctly constructed `Location` headers instead of relying on HTML meta refresh, preserving existing redirect URI queries and fragments.
 - Discovery metadata now preserves the configured base URL, appending the OAuth server port only when absent and constructing endpoint paths without producing malformed `host:port:port` strings.
 - Token issuance no longer crashes the server on JWT signing failures; such errors now surface as OAuth `server_error` responses (HTTP 500).
 - Discovery metadata advertises all supported token endpoint authentication methods, including `client_secret_post`, preventing metadata-driven clients from failing their confidential flows.
 - Dynamic client registration accepts the RFC 7591 `scope` field and persists it, rather than silently defaulting every client to `"read write"`.
+- OAuth error responses now set the `application/json` content type, allowing clients to parse structured failures reliably.
+- The authorize endpoint now returns RFC-compliant `invalid_request` or `unsupported_response_type` errors when callers omit or mis-state required parameters.
 
 # 0.2.0.0
 ## Changed

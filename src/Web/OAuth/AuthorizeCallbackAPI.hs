@@ -25,7 +25,6 @@ module Web.OAuth.AuthorizeCallbackAPI where
 import Control.Concurrent.MVar
 import Control.Monad (unless)
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (encode)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -191,8 +190,8 @@ handleAuthorizeCallback state_var ctxt LoginForm{..} = do
 
     invalidRequest :: Text -> Text -> Handler a
     invalidRequest errorCode errorDescription =
-      throwError err400{errBody = encode $ (oAuthError errorCode){error_description = Just errorDescription}}
+      throwError $ oauthErrorResponse err400 errorCode (Just errorDescription)
 
     unauthorizedClient :: Handler a
     unauthorizedClient =
-      throwError err401{errBody = encode $ (oAuthError "unauthorized_client"){error_description = Just "Client not registered or invalid client_id"}}
+      throwError $ oauthErrorResponse err401 "unauthorized_client" (Just "Client not registered or invalid client_id")

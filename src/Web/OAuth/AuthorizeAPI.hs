@@ -22,7 +22,6 @@ module Web.OAuth.AuthorizeAPI where
 
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (encode)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -91,80 +90,92 @@ handleAuthorize
   -> Handler H.Html
 handleAuthorize
   state_var
-  _responseType@(Just "code")
-  (Just cid)
-  (Just redirect_uri)
+  responseType
+  clientIdParam
+  redirectParam
   mb_scope
   mb_state
   code_challenge
   code_challenge_method
   error_msg = do
-    -- Validate client and redirect URI
+    case responseType of
+      Nothing -> invalidRequest "Missing response_type parameter"
+      Just "code" -> pure ()
+      Just _ -> unsupportedResponseType "Only response_type=code is supported"
+    cid <- maybe (invalidRequest "Missing client_id parameter") pure clientIdParam
+    redirect_uri <- maybe (invalidRequest "Missing redirect_uri parameter") pure redirectParam
     oauth_state <- liftIO $ readMVar state_var
-    -- Check if it's a registered client
     case Map.lookup cid (registered_clients oauth_state) of
       Just RegisteredClient{..} ->
-        -- Validate redirect URI
         if redirect_uri `elem` registered_client_redirect_uris
           then
-            -- Validate scope
             if validateScope scope registered_client_scope
-              then return login_form
+              then return (login_form cid redirect_uri)
               else badRequest "invalid_scope" "Requested scope is not allowed for this client"
           else badRequest "unauthorized_client" "Invalid redirect URI for client"
       Nothing -> authError "unauthorized_client" "Client not registered or invalid client_id"
-    where
-      badRequest :: Text -> Text -> Handler H.Html
-      badRequest error_code desc =
-        throwError err400{errBody = encode $ (oAuthError error_code){error_description = Just desc}}
-      authError :: Text -> Text -> Handler H.Html
-      authError error_code desc =
-        throwError err401{errBody = encode $ (oAuthError error_code){error_description = Just desc}}
-      scope = fromMaybe "" mb_scope
-      state = fromMaybe "" mb_state
-      login_form :: H.Html
-      login_form = H.docTypeHtml $ do
-        H.head $ do
-          H.title "DPella OAuth Login"
-          H.style $
-            H.toHtml $
-              T.unlines
-                [ "body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f0f0f0; }"
-                , ".login-box { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 300px; text-align: center; }"
-                , ".logo { width: 80px; height: 80px; margin: 0 auto 1.5rem; display: block; }"
-                , "h2 { margin-top: 0; margin-bottom: 1.5rem; color: #333; }"
-                , "input { width: 100%; padding: 0.5rem; margin: 0.5rem 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }"
-                , "button { width: 100%; padding: 0.75rem; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; margin-top: 1rem; }"
-                , "button:hover { background-color: #0056b3; }"
-                , ".form-group { text-align: left; }"
-                , ".error-message { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 0.75rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }"
-                ]
-        H.body $ do
-          H.div H.! A.class_ "login-box" $ do
-            H.img H.! A.src "/static/logo.png" H.! A.alt "DPella Logo" H.! A.class_ "logo"
-            H.h2 "DPella"
-            case error_msg of
-              Just "invalid_password" -> H.div H.! A.class_ "error-message" $ "Invalid username or password"
-              Just err -> H.div H.! A.class_ "error-message" $ H.toHtml err
+  where
+    invalidRequest :: Text -> Handler a
+    invalidRequest desc =
+      throwError $ oauthErrorResponse err400 "invalid_request" (Just desc)
+
+    unsupportedResponseType :: Text -> Handler a
+    unsupportedResponseType desc =
+      throwError $ oauthErrorResponse err400 "unsupported_response_type" (Just desc)
+
+    badRequest :: Text -> Text -> Handler H.Html
+    badRequest error_code desc =
+      throwError $ oauthErrorResponse err400 error_code (Just desc)
+
+    authError :: Text -> Text -> Handler H.Html
+    authError error_code desc =
+      throwError $ oauthErrorResponse err401 error_code (Just desc)
+
+    scope = fromMaybe "" mb_scope
+    state = fromMaybe "" mb_state
+
+    login_form :: Text -> Text -> H.Html
+    login_form clientId redirectUri = H.docTypeHtml $ do
+      H.head $ do
+        H.title "DPella OAuth Login"
+        H.style $
+          H.toHtml $
+            T.unlines
+              [ "body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f0f0f0; }"
+              , ".login-box { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 300px; text-align: center; }"
+              , ".logo { width: 80px; height: 80px; margin: 0 auto 1.5rem; display: block; }"
+              , "h2 { margin-top: 0; margin-bottom: 1.5rem; color: #333; }"
+              , "input { width: 100%; padding: 0.5rem; margin: 0.5rem 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }"
+              , "button { width: 100%; padding: 0.75rem; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; margin-top: 1rem; }"
+              , "button:hover { background-color: #0056b3; }"
+              , ".form-group { text-align: left; }"
+              , ".error-message { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 0.75rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }"
+              ]
+      H.body $ do
+        H.div H.! A.class_ "login-box" $ do
+          H.img H.! A.src "/static/logo.png" H.! A.alt "DPella Logo" H.! A.class_ "logo"
+          H.h2 "DPella"
+          case error_msg of
+            Just "invalid_password" -> H.div H.! A.class_ "error-message" $ "Invalid username or password"
+            Just err -> H.div H.! A.class_ "error-message" $ H.toHtml err
+            Nothing -> mempty
+          H.form H.! A.method "post" H.! A.action "/authorize/callback" $ do
+            H.input H.! A.type_ "hidden" H.! A.name "client_id" H.! A.value (H.toValue clientId)
+            H.input H.! A.type_ "hidden" H.! A.name "redirect_uri" H.! A.value (H.toValue redirectUri)
+            H.input H.! A.type_ "hidden" H.! A.name "scope" H.! A.value (H.toValue scope)
+            H.input H.! A.type_ "hidden" H.! A.name "state" H.! A.value (H.toValue state)
+            case code_challenge of
+              Just cc -> H.input H.! A.type_ "hidden" H.! A.name "code_challenge" H.! A.value (H.toValue cc)
               Nothing -> mempty
-            H.form H.! A.method "post" H.! A.action "/authorize/callback" $ do
-              H.input H.! A.type_ "hidden" H.! A.name "client_id" H.! A.value (H.toValue cid)
-              H.input H.! A.type_ "hidden" H.! A.name "redirect_uri" H.! A.value (H.toValue redirect_uri)
-              H.input H.! A.type_ "hidden" H.! A.name "scope" H.! A.value (H.toValue scope)
-              H.input H.! A.type_ "hidden" H.! A.name "state" H.! A.value (H.toValue state)
-              case code_challenge of
-                Just cc -> H.input H.! A.type_ "hidden" H.! A.name "code_challenge" H.! A.value (H.toValue cc)
-                Nothing -> mempty
-              case code_challenge_method of
-                Just ccm -> H.input H.! A.type_ "hidden" H.! A.name "code_challenge_method" H.! A.value (H.toValue ccm)
-                Nothing -> mempty
+            case code_challenge_method of
+              Just ccm -> H.input H.! A.type_ "hidden" H.! A.name "code_challenge_method" H.! A.value (H.toValue ccm)
+              Nothing -> mempty
 
-              H.div H.! A.class_ "form-group" $ do
-                H.input H.! A.type_ "text" H.! A.name "username" H.! A.placeholder "Username" H.! A.required ""
-                H.input H.! A.type_ "password" H.! A.name "password" H.! A.placeholder "Password" H.! A.required ""
+            H.div H.! A.class_ "form-group" $ do
+              H.input H.! A.type_ "text" H.! A.name "username" H.! A.placeholder "Username" H.! A.required ""
+              H.input H.! A.type_ "password" H.! A.name "password" H.! A.placeholder "Password" H.! A.required ""
 
-              H.button H.! A.type_ "submit" $ "Sign In"
-handleAuthorize _ _ _ _ _ _ _ _ _ = throwError err400{errBody = "Missing required parameters"}
+            H.button H.! A.type_ "submit" $ "Sign In"
 
 -- | Validate that the requested scope is a subset of the client's allowed scopes.
 --

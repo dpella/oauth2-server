@@ -131,46 +131,186 @@ handleTokenRequest
   -> TokenRequest
   -> Handler TokenResponse
 handleTokenRequest state_var ctxt TokenRequest{..} = do
-  state <- liftIO $ readMVar state_var
-  case Map.lookup client_id (registered_clients state) of
-    Just RegisteredClient{..} -> do
-      let check_grant =
-            if grant_type `elem` registered_client_grant_types
-              then case grant_type of
-                "authorization_code" -> handleAuthCode state
-                "refresh_token" -> handleRefreshToken state
-                _ -> badTokenRequest "unsupported_grant_type" "Grant type not supported"
-              else badTokenRequest "unauthorized_client" "Grant type not allowed for this client"
-      if registered_client_token_endpoint_auth_method == "client_secret_post"
-        then case (client_secret, registered_client_secret) of
-          (Just provided, Just expected) ->
-            if provided == expected
-              then check_grant
-              else tokenAuthFailure "invalid_client" "Invalid client secret"
-          _ -> tokenAuthFailure "invalid_client" "Missing client secret"
-        else
-          if registered_client_token_endpoint_auth_method == "none"
-            then check_grant
-            else tokenAuthFailure "invalid_client" "Unsupported client authentication method"
-    Nothing -> tokenAuthFailure "unauthorized_client" "Client not registered"
+  let jwtCfg = getContextEntry ctxt
+  result <-
+    liftIO $
+      modifyMVar state_var $ \state ->
+        processRequest jwtCfg state
+  case result of
+    Left err -> throwError err
+    Right resp -> pure resp
   where
-    getUserToken :: usr -> Handler Text
-    getUserToken user = do
-      let jwt_cfg = getContextEntry ctxt
-      now <- liftIO $ getCurrentTime
-      jwt_res <- liftIO $ makeJWT user jwt_cfg $ Just (addUTCTime 3600 now)
-      case jwt_res of
-        Left _ -> internalServerError "Failed to sign access token"
-        Right token ->
-          return $ T.pack $ BSL.unpack token
+    processRequest
+      :: JWTSettings
+      -> OAuthState usr
+      -> IO (OAuthState usr, Either ServerError TokenResponse)
+    processRequest jwtCfg state =
+      case Map.lookup client_id (registered_clients state) of
+        Nothing ->
+          pure (state, Left $ tokenAuthFailure "unauthorized_client" "Client not registered")
+        Just client@RegisteredClient{} -> do
+          authCheck <- authenticateClient client
+          case authCheck of
+            Left err -> pure (state, Left err)
+            Right () -> processGrant jwtCfg state client
 
-    -- \| Verify PKCE code challenge according to RFC 7636.
-    --
-    -- Supports both "plain" and "S256" challenge methods:
-    -- \* plain: code_verifier == code_challenge
-    -- \* S256: BASE64URL(SHA256(code_verifier)) == code_challenge
-    --
-    -- If no method is specified, defaults to "plain" for backwards compatibility.
+    authenticateClient :: RegisteredClient -> IO (Either ServerError ())
+    authenticateClient RegisteredClient{..}
+      | registered_client_token_endpoint_auth_method == "client_secret_post" =
+          case (client_secret, registered_client_secret) of
+            (Just provided, Just expected)
+              | provided == expected -> pure (Right ())
+              | otherwise -> pure (Left $ tokenAuthFailure "invalid_client" "Invalid client secret")
+            _ -> pure (Left $ tokenAuthFailure "invalid_client" "Missing client secret")
+      | registered_client_token_endpoint_auth_method == "none" =
+          pure (Right ())
+      | otherwise =
+          pure (Left $ tokenAuthFailure "invalid_client" "Unsupported client authentication method")
+
+    processGrant
+      :: JWTSettings
+      -> OAuthState usr
+      -> RegisteredClient
+      -> IO (OAuthState usr, Either ServerError TokenResponse)
+    processGrant jwtCfg state client@RegisteredClient{..}
+      | grant_type `elem` registered_client_grant_types =
+          case grant_type of
+            "authorization_code" -> processAuthorizationCode jwtCfg state client
+            "refresh_token" -> processRefreshTokenGrant jwtCfg state client
+            _ -> pure (state, Left $ badTokenRequest "unsupported_grant_type" "Grant type not supported")
+      | otherwise =
+          pure (state, Left $ badTokenRequest "unauthorized_client" "Grant type not allowed for this client")
+
+    processAuthorizationCode
+      :: JWTSettings
+      -> OAuthState usr
+      -> RegisteredClient
+      -> IO (OAuthState usr, Either ServerError TokenResponse)
+    processAuthorizationCode jwtCfg state RegisteredClient{..} = do
+      currentTime <- getCurrentTime
+      case code of
+        Nothing ->
+          pure (state, Left $ badTokenRequest "invalid_request" "Missing authorization code")
+        Just authCodeValue ->
+          case Map.lookup authCodeValue (auth_codes state) of
+            Nothing ->
+              pure (state, Left $ badTokenRequest "invalid_grant" "Invalid authorization code")
+            Just AuthCode{..}
+              | currentTime > auth_code_expiry ->
+                  pure (state, Left $ badTokenRequest "invalid_grant" "Authorization code expired")
+              | auth_code_client_id /= client_id ->
+                  pure (state, Left $ badTokenRequest "invalid_grant" "Client ID mismatch")
+              | otherwise ->
+                  case redirect_uri of
+                    Nothing ->
+                      pure (state, Left $ badTokenRequest "invalid_request" "Missing redirect_uri")
+                    Just ru
+                      | ru `notElem` registered_client_redirect_uris ->
+                          pure (state, Left $ badTokenRequest "invalid_grant" "redirect_uri not registered for client")
+                      | auth_code_redirect_uri /= ru ->
+                          pure (state, Left $ badTokenRequest "invalid_grant" "Redirect URI mismatch")
+                      | otherwise ->
+                          let allowed_scopes = T.words registered_client_scope
+                              granted_scopes = T.words auth_code_scope
+                          in  if not (all (`elem` allowed_scopes) granted_scopes)
+                                then pure (state, Left $ badTokenRequest "invalid_scope" "Invalid or excessive scope requested")
+                                else
+                                  case (auth_code_challenge, auth_code_challenge_method, code_verifier) of
+                                    (Just challenge, method, Just verifier)
+                                      | verifyCodeChallenge challenge method verifier -> do
+                                          accessTokenResult <- issueAccessToken jwtCfg auth_code_user
+                                          case accessTokenResult of
+                                            Left err -> pure (state, Left err)
+                                            Right accessToken -> do
+                                              newRefreshToken <- generateToken
+                                              let refreshRecord =
+                                                    RefreshToken
+                                                      { refresh_token_value = newRefreshToken
+                                                      , refresh_token_client_id = client_id
+                                                      , refresh_token_user = auth_code_user
+                                                      , refresh_token_scope = auth_code_scope
+                                                      }
+                                                  persistence = refresh_token_persistence state
+                                              persistRefreshToken persistence refreshRecord
+                                              let newState =
+                                                    state
+                                                      { auth_codes = Map.delete authCodeValue (auth_codes state)
+                                                      }
+                                              pure
+                                                ( newState
+                                                , Right
+                                                    TokenResponse
+                                                      { access_token = accessToken
+                                                      , token_type = "Bearer"
+                                                      , expires_in = 3600
+                                                      , refresh_token_resp = Just newRefreshToken
+                                                      , scope = Just auth_code_scope
+                                                      }
+                                                )
+                                      | otherwise ->
+                                          pure (state, Left $ badTokenRequest "invalid_grant" "Invalid code verifier")
+                                    _ ->
+                                      pure (state, Left $ badTokenRequest "invalid_request" "PKCE required: missing code_challenge or code_verifier")
+
+    processRefreshTokenGrant
+      :: JWTSettings
+      -> OAuthState usr
+      -> RegisteredClient
+      -> IO (OAuthState usr, Either ServerError TokenResponse)
+    processRefreshTokenGrant jwtCfg state RegisteredClient{..} =
+      case refresh_token of
+        Nothing ->
+          pure (state, Left $ badTokenRequest "invalid_request" "Missing refresh token")
+        Just rtValue -> do
+          let persistence = refresh_token_persistence state
+          stored <- lookupRefreshToken persistence rtValue
+          case stored of
+            Nothing ->
+              pure (state, Left $ badTokenRequest "invalid_grant" "Invalid refresh token")
+            Just RefreshToken{..}
+              | refresh_token_client_id /= client_id ->
+                  pure (state, Left $ badTokenRequest "invalid_grant" "Client ID mismatch")
+              | otherwise ->
+                  let allowed_scopes = T.words registered_client_scope
+                      granted_scopes = T.words refresh_token_scope
+                  in  if not (all (`elem` allowed_scopes) granted_scopes)
+                        then pure (state, Left $ badTokenRequest "invalid_scope" "Invalid or excessive scope requested")
+                        else do
+                          accessTokenResult <- issueAccessToken jwtCfg refresh_token_user
+                          case accessTokenResult of
+                            Left err -> pure (state, Left err)
+                            Right accessToken -> do
+                              newRefreshToken <- generateToken
+                              let newToken =
+                                    RefreshToken
+                                      { refresh_token_value = newRefreshToken
+                                      , refresh_token_client_id = client_id
+                                      , refresh_token_user = refresh_token_user
+                                      , refresh_token_scope = refresh_token_scope
+                                      }
+                              deleteRefreshToken persistence rtValue
+                              persistRefreshToken persistence newToken
+                              pure
+                                ( state
+                                , Right
+                                    TokenResponse
+                                      { access_token = accessToken
+                                      , token_type = "Bearer"
+                                      , expires_in = 3600
+                                      , refresh_token_resp = Just newRefreshToken
+                                      , scope = Just refresh_token_scope
+                                      }
+                                )
+
+    issueAccessToken :: JWTSettings -> usr -> IO (Either ServerError Text)
+    issueAccessToken jwtCfg user = do
+      now <- getCurrentTime
+      jwtRes <- makeJWT user jwtCfg $ Just (addUTCTime 3600 now)
+      pure $
+        case jwtRes of
+          Left _ -> Left $ internalServerError "Failed to sign access token"
+          Right token -> Right $ T.pack $ BSL.unpack token
+
     verifyCodeChallenge :: Text -> Maybe Text -> Text -> Bool
     verifyCodeChallenge challenge method verifier =
       case method of
@@ -181,113 +321,17 @@ handleTokenRequest state_var ctxt TokenRequest{..} = do
               encoded = T.decodeUtf8 $ B64URL.encodeUnpadded hash_bs
           in  encoded == challenge
         Just "plain" -> challenge == verifier
-        Nothing -> challenge == verifier -- default to plain
+        Nothing -> challenge == verifier
         _ -> False
 
-    badTokenRequest :: Text -> Text -> Handler TokenResponse
+    badTokenRequest :: Text -> Text -> ServerError
     badTokenRequest error_code error_description =
-      throwError err400{errBody = encode $ (oAuthError error_code){error_description = Just error_description}}
+      oauthErrorResponse err400 error_code (Just error_description)
 
-    tokenAuthFailure :: Text -> Text -> Handler TokenResponse
+    tokenAuthFailure :: Text -> Text -> ServerError
     tokenAuthFailure error_code error_description =
-      throwError err401{errBody = encode $ (oAuthError error_code){error_description = Just error_description}}
+      oauthErrorResponse err401 error_code (Just error_description)
 
-    internalServerError :: Text -> Handler a
+    internalServerError :: Text -> ServerError
     internalServerError message =
-      throwError err500{errBody = encode $ (oAuthError "server_error"){error_description = Just message}}
-
-    handleAuthCode :: OAuthState usr -> Handler TokenResponse
-    handleAuthCode state = do
-      current_time <- liftIO getCurrentTime
-      case code of
-        Nothing -> badTokenRequest "invalid_request" "Missing authorization code"
-        Just auth_code -> do
-          case Map.lookup auth_code (auth_codes state) of
-            Nothing -> badTokenRequest "invalid_grant" "Invalid authorization code"
-            Just AuthCode{..} -> do
-              if current_time > auth_code_expiry
-                then badTokenRequest "invalid_grant" "Authorization code expired"
-                else
-                  if auth_code_client_id /= client_id
-                    then badTokenRequest "invalid_grant" "Client ID mismatch"
-                    else case redirect_uri of
-                      Nothing -> badTokenRequest "invalid_request" "Missing redirect_uri"
-                      Just ru ->
-                        case Map.lookup client_id (registered_clients state) of
-                          Nothing -> badTokenRequest "invalid_grant" "Client not registered"
-                          Just RegisteredClient{..} ->
-                            if ru `elem` registered_client_redirect_uris
-                              then
-                                if auth_code_redirect_uri /= ru
-                                  then badTokenRequest "invalid_grant" "Redirect URI mismatch"
-                                  else do
-                                    -- Validate scope: must be subset of allowed
-                                    let allowed_scopes = T.words registered_client_scope
-                                        granted_scopes = T.words auth_code_scope
-                                    if all (`elem` allowed_scopes) granted_scopes
-                                      then case (auth_code_challenge, auth_code_challenge_method, code_verifier) of
-                                        -- OAuth 2.1: Enforce PKCE for all clients: challenge and verifier must be present
-                                        (Just challenge, method, Just verifier) ->
-                                          if verifyCodeChallenge challenge method verifier
-                                            then generate_tokens
-                                            else badTokenRequest "invalid_grant" "Invalid code verifier"
-                                        _ -> badTokenRequest "invalid_request" "PKCE required: missing code_challenge or code_verifier"
-                                      else badTokenRequest "invalid_scope" "Invalid or excessive scope requested"
-                              else badTokenRequest "invalid_grant" "redirect_uri not registered for client"
-              where
-                generate_tokens = do
-                  access_token <- getUserToken auth_code_user
-                  new_refresh_token <- liftIO generateToken
-                  liftIO $ modifyMVar_ state_var $ \s -> do
-                    let refresh_token' = RefreshToken new_refresh_token client_id auth_code_user auth_code_scope
-                    persistRefreshToken (refresh_token_persistence state) refresh_token'
-                    return s{auth_codes = Map.delete auth_code (auth_codes s)}
-                  return
-                    TokenResponse
-                      { access_token = access_token
-                      , token_type = "Bearer"
-                      , expires_in = 3600
-                      , refresh_token_resp = Just new_refresh_token
-                      , scope = Just auth_code_scope
-                      }
-
-    handleRefreshToken :: OAuthState usr -> Handler TokenResponse
-    handleRefreshToken state = do
-      let p = refresh_token_persistence state
-      case refresh_token of
-        Nothing ->
-          badTokenRequest "invalid_request" "Missing refresh token"
-        Just rt -> do
-          rt_m <- liftIO $ lookupRefreshToken p rt
-          case rt_m of
-            Nothing ->
-              badTokenRequest "invalid_grant" "Invalid refresh token"
-            Just RefreshToken{..} -> do
-              if refresh_token_client_id /= client_id
-                then
-                  badTokenRequest "invalid_grant" "Client ID mismatch"
-                else case Map.lookup client_id (registered_clients state) of
-                  Nothing -> badTokenRequest "invalid_grant" "Client not registered"
-                  Just RegisteredClient{..} ->
-                    let allowed_scopes = T.words registered_client_scope
-                        granted_scopes = T.words refresh_token_scope
-                    in  if all (`elem` allowed_scopes) granted_scopes
-                          then do
-                            -- Rotate the refresh token: generate a new one, invalidate the old one
-                            new_refresh_token <- liftIO generateToken
-                            access_token <- getUserToken refresh_token_user
-                            liftIO $ modifyMVar_ state_var $ \s -> do
-                              let new_rt = RefreshToken new_refresh_token client_id refresh_token_user refresh_token_scope
-                              -- Rotate via persistence handler (Map-backed by default)
-                              deleteRefreshToken p rt
-                              persistRefreshToken p new_rt
-                              return s
-                            return
-                              TokenResponse
-                                { access_token = access_token
-                                , token_type = "Bearer"
-                                , expires_in = 3600
-                                , refresh_token_resp = Just new_refresh_token
-                                , scope = Just refresh_token_scope
-                                }
-                          else badTokenRequest "invalid_scope" "Invalid or excessive scope requested"
+      oauthErrorResponse err500 "server_error" (Just message)

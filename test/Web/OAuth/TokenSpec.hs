@@ -3,13 +3,17 @@
 
 module Web.OAuth.TokenSpec (tests) where
 
+import Control.Concurrent.Async (concurrently)
 import Control.Concurrent.MVar (MVar, readMVar)
-import Data.Aeson (eitherDecode)
+import Data.Aeson (Value (..), eitherDecode)
+import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString.Lazy qualified as LBS
 import Data.Map.Strict qualified as Map
+import Data.List (sort)
 import Data.Text (Text)
 import Data.Time.Clock
-import Network.HTTP.Types (hContentType, methodPost, status400, status401)
+import Data.Maybe (isJust, isNothing)
+import Network.HTTP.Types (hContentType, methodPost, status200, status400, status401)
 import Network.Wai (Application, requestHeaders, requestMethod)
 import Network.Wai.Test
 import Test.Tasty
@@ -27,6 +31,8 @@ tests =
     , confidentialClientsRequireSecret
     , rejectsUnknownRefreshToken
     , rejectsRefreshScopeEscalation
+    , authorizationCodeSingleUseConcurrent
+    , refreshTokenSingleUseConcurrent
     ]
 
 withFreshApp :: (MVar (OAuthState TestUser) -> Application -> IO a) -> IO a
@@ -90,6 +96,7 @@ rejectsMissingVerifier = testCase "enforces PKCE code_verifier when challenge st
             ]
         )
     simpleStatus res @?= status400
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- decodeOAuthError (simpleBody res)
     Web.OAuth.Types.error errResp @?= "invalid_request"
 
@@ -112,6 +119,7 @@ rejectsInvalidVerifier = testCase "rejects mismatched code_verifier" $
             ]
         )
     simpleStatus res @?= status400
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- decodeOAuthError (simpleBody res)
     Web.OAuth.Types.error errResp @?= "invalid_grant"
     Web.OAuth.Types.error_description errResp @?= Just "Invalid code verifier"
@@ -135,6 +143,7 @@ rejectsExpiredAuthCode = testCase "rejects expired authorization codes" $
             ]
         )
     simpleStatus res @?= status400
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- decodeOAuthError (simpleBody res)
     Web.OAuth.Types.error errResp @?= "invalid_grant"
     Web.OAuth.Types.error_description errResp @?= Just "Authorization code expired"
@@ -158,6 +167,7 @@ confidentialClientsRequireSecret = testCase "confidential clients must provide c
             ]
         )
     simpleStatus res @?= status401
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- decodeOAuthError (simpleBody res)
     Web.OAuth.Types.error errResp @?= "invalid_client"
     st <- readMVar stateVar
@@ -177,6 +187,7 @@ rejectsUnknownRefreshToken = testCase "rejects refresh_token grant when token mi
             ]
         )
     simpleStatus res @?= status400
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- decodeOAuthError (simpleBody res)
     Web.OAuth.Types.error errResp @?= "invalid_grant"
 
@@ -202,5 +213,79 @@ rejectsRefreshScopeEscalation = testCase "rejects refresh token with scope outsi
             ]
         )
     simpleStatus res @?= status400
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- decodeOAuthError (simpleBody res)
     Web.OAuth.Types.error errResp @?= "invalid_scope"
+
+authorizationCodeSingleUseConcurrent :: TestTree
+authorizationCodeSingleUseConcurrent = testCase "authorization codes cannot be redeemed concurrently" $
+  withFreshApp $ \stateVar app -> do
+    addRegisteredClientToState stateVar (mkPublicClient "pub-6" ["http://localhost:4000/cb"] "read")
+    now <- getCurrentTime
+    let authCode = mkAuthCode "code-concurrent" "pub-6" "http://localhost:4000/cb" "read" (addUTCTime 600 now) (Just "verifier") (Just "plain")
+    addAuthCodeToState stateVar authCode
+    let body =
+          encodeForm
+            [ ("grant_type", "authorization_code")
+            , ("code", "code-concurrent")
+            , ("redirect_uri", "http://localhost:4000/cb")
+            , ("client_id", "pub-6")
+            , ("code_verifier", "verifier")
+            ]
+    (resA, resB) <- concurrently (postToken app body) (postToken app body)
+    let statuses = sort [simpleStatus resA, simpleStatus resB]
+    statuses @?= [status200, status400]
+    let (failureRes, successRes) =
+          if simpleStatus resA == status400 then (resA, resB) else (resB, resA)
+    lookup hContentType (simpleHeaders failureRes) @?= Just "application/json; charset=utf-8"
+    errResp <- decodeOAuthError (simpleBody failureRes)
+    Web.OAuth.Types.error errResp @?= "invalid_grant"
+    simpleStatus successRes @?= status200
+    stateAfter <- readMVar stateVar
+    Map.member "code-concurrent" (auth_codes stateAfter) @?= False
+
+refreshTokenSingleUseConcurrent :: TestTree
+refreshTokenSingleUseConcurrent = testCase "refresh tokens rotate under concurrent use" $
+  withFreshApp $ \stateVar app -> do
+    addRegisteredClientToState stateVar (mkPublicClient "pub-7" ["http://localhost:4000/cb"] "read")
+    let refreshTok =
+          RefreshToken
+            { refresh_token_value = "rt-concurrent"
+            , refresh_token_client_id = "pub-7"
+            , refresh_token_user = testUser
+            , refresh_token_scope = "read"
+            }
+    addRefreshTokenToState stateVar refreshTok
+    let body =
+          encodeForm
+            [ ("grant_type", "refresh_token")
+            , ("refresh_token", "rt-concurrent")
+            , ("client_id", "pub-7")
+            ]
+    (resA, resB) <- concurrently (postToken app body) (postToken app body)
+    let statuses = sort [simpleStatus resA, simpleStatus resB]
+    statuses @?= [status200, status400]
+    let (failureRes, successRes) =
+          if simpleStatus resA == status400 then (resA, resB) else (resB, resA)
+    lookup hContentType (simpleHeaders failureRes) @?= Just "application/json; charset=utf-8"
+    errResp <- decodeOAuthError (simpleBody failureRes)
+    Web.OAuth.Types.error errResp @?= "invalid_grant"
+    simpleStatus successRes @?= status200
+    successValue <-
+      case eitherDecode (simpleBody successRes) :: Either String Value of
+        Left err -> assertFailure ("Failed to decode success token response: " <> err)
+        Right val -> pure val
+    newRefresh <-
+      case successValue of
+        Object obj ->
+          case KM.lookup "refresh_token" obj of
+            Just (String t) -> pure t
+            _ -> assertFailure "refresh_token missing from successful response"
+        _ -> assertFailure "Expected object in token response"
+    assertBool "rotation produced new token" (newRefresh /= "rt-concurrent")
+    stateAfter <- readMVar stateVar
+    let persistence = refresh_token_persistence stateAfter
+    oldToken <- lookupRefreshToken persistence "rt-concurrent"
+    assertBool "old refresh token removed" (isNothing oldToken)
+    newToken <- lookupRefreshToken persistence newRefresh
+    assertBool "new refresh token persisted" (isJust newToken)
