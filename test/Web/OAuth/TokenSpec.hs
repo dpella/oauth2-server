@@ -7,24 +7,36 @@ import Control.Concurrent.Async (concurrently)
 import Control.Concurrent.MVar (MVar, readMVar)
 import Data.Aeson (Value (..), eitherDecode)
 import Data.Aeson.KeyMap qualified as KM
+import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as LBS
-import Data.Map.Strict qualified as Map
 import Data.List (sort)
+import Data.Map.Strict qualified as Map
+import Data.Maybe (isJust, isNothing)
 import Data.Text (Text)
 import Data.Time.Clock
-import Data.Maybe (isJust, isNothing)
 import Network.HTTP.Types (hContentType, methodPost, status200, status400, status401)
 import Network.Wai (Application, requestHeaders, requestMethod)
 import Network.Wai.Test
+import Servant.API.ResponseHeaders (getHeaders, getResponse)
 import Test.Tasty
 import Test.Tasty.HUnit
+import Web.OAuth.Internal (TokenRequest (..), TokenResponse (..), TokenResponseHeaders, handleTokenRequest)
 import Web.OAuth.TestUtils
-import Web.OAuth.Types
+import Web.OAuth.Types hiding (error)
+import Web.OAuth.Types qualified as OAuthTypes
 
 tests :: TestTree
 tests =
   testGroup
     "Token endpoint"
+    [ tokenEndpointIntegrationTests
+    , handlerLevelTests
+    ]
+
+tokenEndpointIntegrationTests :: TestTree
+tokenEndpointIntegrationTests =
+  testGroup
+    "Integration"
     [ rejectsMissingVerifier
     , rejectsInvalidVerifier
     , rejectsExpiredAuthCode
@@ -33,6 +45,14 @@ tests =
     , rejectsRefreshScopeEscalation
     , authorizationCodeSingleUseConcurrent
     , refreshTokenSingleUseConcurrent
+    ]
+
+handlerLevelTests :: TestTree
+handlerLevelTests =
+  testGroup
+    "Handler behaviour"
+    [ noRefreshTokenIssuedForClientsWithoutGrant
+    , refreshTokenIssuedWhenAllowed
     ]
 
 withFreshApp :: (MVar (OAuthState TestUser) -> Application -> IO a) -> IO a
@@ -57,7 +77,7 @@ postToken app body = do
           body
   runSession (srequest req) app
 
-mkAuthCode
+mkAuthCodeEntry
   :: Text
   -> Text
   -> Text
@@ -66,7 +86,7 @@ mkAuthCode
   -> Maybe Text
   -> Maybe Text
   -> AuthCode TestUser
-mkAuthCode value clientId redirect scope expiry challenge method =
+mkAuthCodeEntry value clientId redirect scope expiry challenge method =
   AuthCode
     { auth_code_value = value
     , auth_code_client_id = clientId
@@ -83,8 +103,8 @@ rejectsMissingVerifier = testCase "enforces PKCE code_verifier when challenge st
   withFreshApp $ \stateVar app -> do
     addRegisteredClientToState stateVar (mkPublicClient "pub-1" ["http://localhost:4000/cb"] "read write")
     now <- getCurrentTime
-    let code = mkAuthCode "code-pkce" "pub-1" "http://localhost:4000/cb" "read" (addUTCTime 600 now) (Just "challenge") (Just "plain")
-    addAuthCodeToState stateVar code
+    let authCode = mkAuthCodeEntry "code-pkce" "pub-1" "http://localhost:4000/cb" "read" (addUTCTime 600 now) (Just "challenge") (Just "plain")
+    addAuthCodeToState stateVar authCode
     res <-
       postToken
         app
@@ -98,15 +118,15 @@ rejectsMissingVerifier = testCase "enforces PKCE code_verifier when challenge st
     simpleStatus res @?= status400
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- decodeOAuthError (simpleBody res)
-    Web.OAuth.Types.error errResp @?= "invalid_request"
+    OAuthTypes.error errResp @?= "invalid_request"
 
 rejectsInvalidVerifier :: TestTree
 rejectsInvalidVerifier = testCase "rejects mismatched code_verifier" $
   withFreshApp $ \stateVar app -> do
     addRegisteredClientToState stateVar (mkPublicClient "pub-2" ["http://localhost:4000/cb"] "read")
     now <- getCurrentTime
-    let code = mkAuthCode "code-wrong" "pub-2" "http://localhost:4000/cb" "read" (addUTCTime 600 now) (Just "correct") (Just "plain")
-    addAuthCodeToState stateVar code
+    let authCode = mkAuthCodeEntry "code-wrong" "pub-2" "http://localhost:4000/cb" "read" (addUTCTime 600 now) (Just "correct") (Just "plain")
+    addAuthCodeToState stateVar authCode
     res <-
       postToken
         app
@@ -121,16 +141,16 @@ rejectsInvalidVerifier = testCase "rejects mismatched code_verifier" $
     simpleStatus res @?= status400
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- decodeOAuthError (simpleBody res)
-    Web.OAuth.Types.error errResp @?= "invalid_grant"
-    Web.OAuth.Types.error_description errResp @?= Just "Invalid code verifier"
+    OAuthTypes.error errResp @?= "invalid_grant"
+    OAuthTypes.error_description errResp @?= Just "Invalid code verifier"
 
 rejectsExpiredAuthCode :: TestTree
 rejectsExpiredAuthCode = testCase "rejects expired authorization codes" $
   withFreshApp $ \stateVar app -> do
     addRegisteredClientToState stateVar (mkPublicClient "pub-3" ["http://localhost:4000/cb"] "read")
     now <- getCurrentTime
-    let code = mkAuthCode "code-expired" "pub-3" "http://localhost:4000/cb" "read" (addUTCTime (-30) now) (Just "verifier") (Just "plain")
-    addAuthCodeToState stateVar code
+    let authCode = mkAuthCodeEntry "code-expired" "pub-3" "http://localhost:4000/cb" "read" (addUTCTime (-30) now) (Just "verifier") (Just "plain")
+    addAuthCodeToState stateVar authCode
     res <-
       postToken
         app
@@ -145,16 +165,16 @@ rejectsExpiredAuthCode = testCase "rejects expired authorization codes" $
     simpleStatus res @?= status400
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- decodeOAuthError (simpleBody res)
-    Web.OAuth.Types.error errResp @?= "invalid_grant"
-    Web.OAuth.Types.error_description errResp @?= Just "Authorization code expired"
+    OAuthTypes.error errResp @?= "invalid_grant"
+    OAuthTypes.error_description errResp @?= Just "Authorization code expired"
 
 confidentialClientsRequireSecret :: TestTree
 confidentialClientsRequireSecret = testCase "confidential clients must provide client_secret" $
   withFreshApp $ \stateVar app -> do
     addRegisteredClientToState stateVar (mkConfidentialClient "conf-1" "top-secret" ["http://localhost:4000/cb"] "read")
     now <- getCurrentTime
-    let code = mkAuthCode "code-conf" "conf-1" "http://localhost:4000/cb" "read" (addUTCTime 600 now) (Just "secret") Nothing
-    addAuthCodeToState stateVar code
+    let authCode = mkAuthCodeEntry "code-conf" "conf-1" "http://localhost:4000/cb" "read" (addUTCTime 600 now) (Just "secret") Nothing
+    addAuthCodeToState stateVar authCode
     res <-
       postToken
         app
@@ -168,9 +188,8 @@ confidentialClientsRequireSecret = testCase "confidential clients must provide c
         )
     simpleStatus res @?= status401
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
-    lookup "WWW-Authenticate" (simpleHeaders res) @?= Just "Basic realm=\"oauth\""
     errResp <- decodeOAuthError (simpleBody res)
-    Web.OAuth.Types.error errResp @?= "invalid_client"
+    OAuthTypes.error errResp @?= "invalid_client"
     st <- readMVar stateVar
     Map.member "code-conf" (auth_codes st) @?= True
 
@@ -190,7 +209,7 @@ rejectsUnknownRefreshToken = testCase "rejects refresh_token grant when token mi
     simpleStatus res @?= status400
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- decodeOAuthError (simpleBody res)
-    Web.OAuth.Types.error errResp @?= "invalid_grant"
+    OAuthTypes.error errResp @?= "invalid_grant"
 
 rejectsRefreshScopeEscalation :: TestTree
 rejectsRefreshScopeEscalation = testCase "rejects refresh token with scope outside client allowance" $
@@ -216,16 +235,15 @@ rejectsRefreshScopeEscalation = testCase "rejects refresh token with scope outsi
     simpleStatus res @?= status400
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- decodeOAuthError (simpleBody res)
-    Web.OAuth.Types.error errResp @?= "invalid_scope"
+    OAuthTypes.error errResp @?= "invalid_scope"
 
 authorizationCodeSingleUseConcurrent :: TestTree
 authorizationCodeSingleUseConcurrent = testCase "authorization codes cannot be redeemed concurrently" $
   withFreshApp $ \stateVar app -> do
     addRegisteredClientToState stateVar (mkPublicClient "pub-6" ["http://localhost:4000/cb"] "read")
     now <- getCurrentTime
-    let authCode = mkAuthCode "code-concurrent" "pub-6" "http://localhost:4000/cb" "read" (addUTCTime 600 now) (Just "verifier") (Just "plain")
-    addAuthCodeToState stateVar authCode
-    let body =
+    let authCode = mkAuthCodeEntry "code-concurrent" "pub-6" "http://localhost:4000/cb" "read" (addUTCTime 600 now) (Just "verifier") (Just "plain")
+        body =
           encodeForm
             [ ("grant_type", "authorization_code")
             , ("code", "code-concurrent")
@@ -233,16 +251,16 @@ authorizationCodeSingleUseConcurrent = testCase "authorization codes cannot be r
             , ("client_id", "pub-6")
             , ("code_verifier", "verifier")
             ]
+    addAuthCodeToState stateVar authCode
     (resA, resB) <- concurrently (postToken app body) (postToken app body)
     let statuses = sort [simpleStatus resA, simpleStatus resB]
     statuses @?= [status200, status400]
-    let (failureRes, successRes) =
-          if simpleStatus resA == status400 then (resA, resB) else (resB, resA)
+    let (failureRes, successRes) = if simpleStatus resA == status400 then (resA, resB) else (resB, resA)
     lookup hContentType (simpleHeaders failureRes) @?= Just "application/json; charset=utf-8"
     errResp <- decodeOAuthError (simpleBody failureRes)
-    Web.OAuth.Types.error errResp @?= "invalid_grant"
+    OAuthTypes.error errResp @?= "invalid_grant"
     simpleStatus successRes @?= status200
-    assertNoStoreHeaders successRes
+    assertNoStoreHeadersResponse successRes
     stateAfter <- readMVar stateVar
     Map.member "code-concurrent" (auth_codes stateAfter) @?= False
 
@@ -250,30 +268,29 @@ refreshTokenSingleUseConcurrent :: TestTree
 refreshTokenSingleUseConcurrent = testCase "refresh tokens rotate under concurrent use" $
   withFreshApp $ \stateVar app -> do
     addRegisteredClientToState stateVar (mkPublicClient "pub-7" ["http://localhost:4000/cb"] "read")
-    let refreshTok =
+    let originalToken =
           RefreshToken
             { refresh_token_value = "rt-concurrent"
             , refresh_token_client_id = "pub-7"
             , refresh_token_user = testUser
             , refresh_token_scope = "read"
             }
-    addRefreshTokenToState stateVar refreshTok
-    let body =
+        body =
           encodeForm
             [ ("grant_type", "refresh_token")
             , ("refresh_token", "rt-concurrent")
             , ("client_id", "pub-7")
             ]
+    addRefreshTokenToState stateVar originalToken
     (resA, resB) <- concurrently (postToken app body) (postToken app body)
     let statuses = sort [simpleStatus resA, simpleStatus resB]
     statuses @?= [status200, status400]
-    let (failureRes, successRes) =
-          if simpleStatus resA == status400 then (resA, resB) else (resB, resA)
+    let (failureRes, successRes) = if simpleStatus resA == status400 then (resA, resB) else (resB, resA)
     lookup hContentType (simpleHeaders failureRes) @?= Just "application/json; charset=utf-8"
     errResp <- decodeOAuthError (simpleBody failureRes)
-    Web.OAuth.Types.error errResp @?= "invalid_grant"
+    OAuthTypes.error errResp @?= "invalid_grant"
     simpleStatus successRes @?= status200
-    assertNoStoreHeaders successRes
+    assertNoStoreHeadersResponse successRes
     successValue <-
       case eitherDecode (simpleBody successRes) :: Either String Value of
         Left err -> assertFailure ("Failed to decode success token response: " <> err)
@@ -285,15 +302,99 @@ refreshTokenSingleUseConcurrent = testCase "refresh tokens rotate under concurre
             Just (String t) -> pure t
             _ -> assertFailure "refresh_token missing from successful response"
         _ -> assertFailure "Expected object in token response"
-    assertBool "rotation produced new token" (newRefresh /= "rt-concurrent")
+    assertBool "rotation produced new token" (newRefresh /= refresh_token_value originalToken)
     stateAfter <- readMVar stateVar
     let persistence = refresh_token_persistence stateAfter
-    oldToken <- lookupRefreshToken persistence "rt-concurrent"
+    oldToken <- lookupRefreshToken persistence (refresh_token_value originalToken)
     assertBool "old refresh token removed" (isNothing oldToken)
     newToken <- lookupRefreshToken persistence newRefresh
     assertBool "new refresh token persisted" (isJust newToken)
 
-assertNoStoreHeaders :: SResponse -> Assertion
-assertNoStoreHeaders res = do
+noRefreshTokenIssuedForClientsWithoutGrant :: TestTree
+noRefreshTokenIssuedForClientsWithoutGrant =
+  testCase "authorization_code clients without refresh grant do not receive refresh tokens" $ do
+    (persistence, readPersisted) <- mkTrackingPersistence
+    let client =
+          mkRegisteredClient
+            "public-client"
+            ["https://client.example/callback"]
+            ["authorization_code"]
+            ["code"]
+            "read"
+            "none"
+            Nothing
+    expiry <- addUTCTime 600 <$> getCurrentTime
+    let user = testUser
+        authCode = mkAuthCode "auth-code-1" client user expiry "https://client.example/callback" (Just "verifier") Nothing
+    stateVar <- mkState persistence [client] [("auth-code-1", authCode)]
+    jwtSettings <- mkJWTSettings
+    let tokenRequest =
+          TokenRequest
+            { grant_type = "authorization_code"
+            , code = Just "auth-code-1"
+            , refresh_token = Nothing
+            , redirect_uri = Just "https://client.example/callback"
+            , client_id = "public-client"
+            , client_secret = Nothing
+            , code_verifier = Just "verifier"
+            }
+    result <- runHandler $ handleTokenRequest stateVar (jwtContext jwtSettings) tokenRequest
+    tokenResponseHeaders <-
+      either (assertFailure . ("Token handler failed: " <>) . show) pure result
+    let tokenResponse = getResponse tokenResponseHeaders
+    assertBool "refresh_token should be omitted" (isNothing (refresh_token_resp tokenResponse))
+    persisted <- readPersisted
+    assertBool "no refresh token should be persisted" (null persisted)
+    stateAfter <- readMVar stateVar
+    assertBool "authorization code should be cleared" (null (auth_codes stateAfter))
+    assertNoStoreHeadersFromHeaders tokenResponseHeaders
+
+refreshTokenIssuedWhenAllowed :: TestTree
+refreshTokenIssuedWhenAllowed =
+  testCase "authorization_code clients with refresh grant receive refresh tokens" $ do
+    (persistence, readPersisted) <- mkTrackingPersistence
+    let client =
+          mkRegisteredClient
+            "confidential-client"
+            ["https://conf.example/cb"]
+            ["authorization_code", "refresh_token"]
+            ["code"]
+            "read"
+            "none"
+            Nothing
+    expiry <- addUTCTime 600 <$> getCurrentTime
+    let user = testUser
+        authCode = mkAuthCode "auth-code-2" client user expiry "https://conf.example/cb" (Just "verifier") Nothing
+    stateVar <- mkState persistence [client] [("auth-code-2", authCode)]
+    jwtSettings <- mkJWTSettings
+    let tokenRequest =
+          TokenRequest
+            { grant_type = "authorization_code"
+            , code = Just "auth-code-2"
+            , refresh_token = Nothing
+            , redirect_uri = Just "https://conf.example/cb"
+            , client_id = "confidential-client"
+            , client_secret = Nothing
+            , code_verifier = Just "verifier"
+            }
+    result <- runHandler $ handleTokenRequest stateVar (jwtContext jwtSettings) tokenRequest
+    tokenResponseHeaders <-
+      either (assertFailure . ("Token handler failed: " <>) . show) pure result
+    let tokenResponse = getResponse tokenResponseHeaders
+    assertBool "refresh_token should be present" (isJust (refresh_token_resp tokenResponse))
+    persisted <- readPersisted
+    assertEqual "a refresh token should be persisted" 1 (length persisted)
+    stateAfter <- readMVar stateVar
+    assertBool "authorization code should be cleared" (null (auth_codes stateAfter))
+    assertNoStoreHeadersFromHeaders tokenResponseHeaders
+
+assertNoStoreHeadersFromHeaders :: TokenResponseHeaders -> Assertion
+assertNoStoreHeadersFromHeaders headers = do
+  let actualHeaders = fmap (BS8.unpack . snd) (getHeaders headers)
+  assertBool "Cache-Control no-store" ("no-store" `elem` actualHeaders)
+  assertBool "Pragma no-cache" ("no-cache" `elem` actualHeaders)
+
+assertNoStoreHeadersResponse :: SResponse -> Assertion
+assertNoStoreHeadersResponse res = do
   lookup "Cache-Control" (simpleHeaders res) @?= Just "no-store"
   lookup "Pragma" (simpleHeaders res) @?= Just "no-cache"

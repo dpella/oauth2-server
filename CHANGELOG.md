@@ -22,6 +22,13 @@
 - Dynamic client registration accepts the RFC 7591 `scope` field and persists it, rather than silently defaulting every client to `"read write"`.
 - OAuth error responses now set the `application/json` content type, allowing clients to parse structured failures reliably.
 - The authorize endpoint now returns RFC-compliant `invalid_request` or `unsupported_response_type` errors when callers omit or mis-state required parameters.
+- Authorization code exchanges no longer mint refresh tokens for clients that omit the `refresh_token` grant, aligning runtime behaviour with registered capabilities.
+- Confidential client registrations now leave `client_secret_expires_at` unset for non-expiring secrets instead of reporting an immediately expired timestamp.
+
+## Changed
+- Source module headers now declare the MPL-2.0 license to match the package manifest.
+- Added `Web.OAuth.Internal` to expose a stable-for-tests surface so the test suite can target internals without compiling the entire source tree.
+- Restored the full suite of OAuth endpoint tests, including end-to-end flow coverage, after they were accidentally dropped during the namespace migration.
 
 # 0.2.0.0
 ## Changed

@@ -7,7 +7,7 @@
 -- |
 -- Module:      Web.OAuth.RegisterAPI
 -- Copyright:   (c) DPella AB 2025
--- License:     LicenseRef-AllRightsReserved
+-- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
 --
 -- OAuth 2.1 Dynamic Client Registration for DPella.
@@ -157,7 +157,7 @@ handleRegister state_var ClientRegistrationRequest{..} = do
       { reg_client_id = client_id
       , reg_client_name = client_name
       , reg_client_secret = secret'
-      , reg_client_secret_expires_at = fmap (const 0) secret'
+      , reg_client_secret_expires_at = Nothing
       , reg_redirect_uris = redirect_uris
       , reg_grant_types = default_grant_types
       , reg_response_types = default_response_types

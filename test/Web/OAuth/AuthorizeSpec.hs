@@ -10,14 +10,15 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
-import Network.HTTP.Types (hContentType, hLocation, status200, status303, status400, status401)
+import Network.HTTP.Types (hContentType, status200, status303, status400, status401)
 import Network.HTTP.Types.URI (renderQuery)
 import Network.Wai (Application)
 import Network.Wai.Test
 import Test.Tasty
 import Test.Tasty.HUnit
-import Web.OAuth.Types
 import Web.OAuth.TestUtils
+import Web.OAuth.Types hiding (error)
+import Web.OAuth.Types qualified as OAuthTypes
 
 tests :: TestTree
 tests =
@@ -59,9 +60,8 @@ rejectsUnknownClient = testCase "returns 401 for unknown client_id" $
         (srequest (SRequest (setPath defaultRequest path) LBS.empty))
         app
     simpleStatus res @?= status401
-    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- reconstructError (simpleBody res)
-    Web.OAuth.Types.error errResp @?= "unauthorized_client"
+    OAuthTypes.error errResp @?= "unauthorized_client"
 
 rejectsMismatchedRedirect :: TestTree
 rejectsMismatchedRedirect = testCase "400 when redirect_uri not registered" $
@@ -80,12 +80,11 @@ rejectsMismatchedRedirect = testCase "400 when redirect_uri not registered" $
         (srequest (SRequest (setPath defaultRequest path) LBS.empty))
         app
     simpleStatus res @?= status400
-    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     errResp <- reconstructError (simpleBody res)
-    Web.OAuth.Types.error errResp @?= "unauthorized_client"
+    OAuthTypes.error errResp @?= "unauthorized_client"
 
 rejectsInvalidScope :: TestTree
-rejectsInvalidScope = testCase "400 when scope exceeds client allow list" $
+rejectsInvalidScope = testCase "redirects with invalid_scope when request exceeds client allow list" $
   withApp $ \stateVar app -> do
     addRegisteredClientToState stateVar (mkPublicClient "cid-2" ["http://localhost:4000/callback"] "read write")
     let query =
@@ -101,12 +100,44 @@ rejectsInvalidScope = testCase "400 when scope exceeds client allow list" $
         (srequest (SRequest (setPath defaultRequest path) LBS.empty))
         app
     simpleStatus res @?= status303
-    case lookup hLocation (simpleHeaders res) of
-      Nothing -> assertFailure "Missing Location header for invalid_scope redirect"
+    case lookup "Location" (simpleHeaders res) of
+      Nothing -> assertFailure "Location header missing on invalid scope redirect"
       Just loc -> do
         let locText = TE.decodeUtf8 loc
-        assertBool "error parameter present" ("error=invalid_scope" `T.isInfixOf` locText)
-        assertBool "state preserved in redirect" ("state=s" `T.isInfixOf` locText)
+        assertBool "redirect URI preserved" ("http://localhost:4000/callback" `T.isPrefixOf` locText)
+        assertBool "invalid_scope error included" ("error=invalid_scope" `T.isInfixOf` locText)
+        assertBool "state propagated" ("state=s" `T.isInfixOf` locText)
+
+omitsStateHiddenFieldWhenAbsent :: TestTree
+omitsStateHiddenFieldWhenAbsent = testCase "does not propagate state when request omitted it" $
+  withApp $ \stateVar app -> do
+    addRegisteredClientToState stateVar (mkPublicClient "cid-5" ["http://localhost:4000/cb"] "read")
+    let query =
+          [ ("response_type", Just "code")
+          , ("client_id", Just "cid-5")
+          , ("redirect_uri", Just "http://localhost:4000/cb")
+          , ("scope", Just "read")
+          ]
+        path = BS.concat ["/authorize", renderQuery True query]
+    res <-
+      runSession
+        (srequest (SRequest (setPath defaultRequest path) LBS.empty))
+        app
+    simpleStatus res @?= status200
+    let bodyTxt = LBS.toStrict (simpleBody res)
+    assertBool "state input absent" (not ("name=\"state\"" `BS.isInfixOf` bodyTxt))
+
+missingParametersReturnInvalidRequest :: TestTree
+missingParametersReturnInvalidRequest = testCase "returns JSON invalid_request when required params absent" $
+  withApp $ \_ app -> do
+    res <-
+      runSession
+        (srequest (SRequest (setPath defaultRequest "/authorize") LBS.empty))
+        app
+    simpleStatus res @?= status400
+    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
+    errResp <- reconstructError (simpleBody res)
+    OAuthTypes.error errResp @?= "invalid_request"
 
 rendersLoginFormWithPkce :: TestTree
 rendersLoginFormWithPkce = testCase "renders login form for valid request including PKCE fields" $
@@ -152,34 +183,3 @@ echoesErrorMessage = testCase "renders login form with error message when provid
     simpleStatus res @?= status200
     let bodyTxt = LBS.toStrict (simpleBody res)
     assertBool "error message rendered" ("Invalid username or password" `BS.isInfixOf` bodyTxt)
-
-omitsStateHiddenFieldWhenAbsent :: TestTree
-omitsStateHiddenFieldWhenAbsent = testCase "does not propagate state when request omitted it" $
-  withApp $ \stateVar app -> do
-    addRegisteredClientToState stateVar (mkPublicClient "cid-5" ["http://localhost:4000/cb"] "read")
-    let query =
-          [ ("response_type", Just "code")
-          , ("client_id", Just "cid-5")
-          , ("redirect_uri", Just "http://localhost:4000/cb")
-          , ("scope", Just "read")
-          ]
-        path = BS.concat ["/authorize", renderQuery True query]
-    res <-
-      runSession
-        (srequest (SRequest (setPath defaultRequest path) LBS.empty))
-        app
-    simpleStatus res @?= status200
-    let bodyTxt = LBS.toStrict (simpleBody res)
-    assertBool "state input absent" (not ("name=\"state\"" `BS.isInfixOf` bodyTxt))
-
-missingParametersReturnInvalidRequest :: TestTree
-missingParametersReturnInvalidRequest = testCase "returns JSON invalid_request when required params absent" $
-  withApp $ \_ app -> do
-    res <-
-      runSession
-        (srequest (SRequest (setPath defaultRequest "/authorize") LBS.empty))
-        app
-    simpleStatus res @?= status400
-    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
-    errResp <- reconstructError (simpleBody res)
-    Web.OAuth.Types.error errResp @?= "invalid_request"

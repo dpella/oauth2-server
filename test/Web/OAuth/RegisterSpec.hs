@@ -11,7 +11,6 @@ import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString.Lazy qualified as LBS
 import Data.Foldable (toList)
 import Data.Map.Strict qualified as Map
-import Data.Scientific (toBoundedInteger)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Network.HTTP.Types (hContentType, methodPost, status200, status400)
@@ -96,8 +95,8 @@ appliesDefaultsForPublicClients = testCase "fills defaults for omitted fields" $
     responses @?= ["code"]
     scopeVal <- getTextField "scope"
     scopeVal @?= "read write"
-    KM.lookup "client_secret" obj @?= Nothing
-    KM.lookup "client_secret_expires_at" obj @?= Nothing
+    assertBool "client_secret absent" (KM.lookup "client_secret" obj == Nothing)
+    assertBool "client_secret_expires_at absent" (KM.lookup "client_secret_expires_at" obj == Nothing)
 
     st <- readMVar stateVar
     case Map.lookup clientId (registered_clients st) of
@@ -125,19 +124,13 @@ issuesSecretForConfidentialClients = testCase "returns secret for confidential r
       case KM.lookup "client_secret" obj of
         Just (String s) -> pure s
         _ -> assertFailure "client_secret missing"
-    expiryField <-
-      case KM.lookup "client_secret_expires_at" obj of
-        Just (Number n) ->
-          case toBoundedInteger @Int n of
-            Just i -> pure i
-            Nothing -> assertFailure "client_secret_expires_at not an integer"
-        _ -> assertFailure "client_secret_expires_at missing"
+    let expiryField = KM.lookup "client_secret_expires_at" obj
+    assertBool "expiry omitted" (expiryField == Nothing)
     clientId <-
       case KM.lookup "client_id" obj of
         Just (String cid) -> pure cid
         _ -> assertFailure "client_id missing"
     assertBool "secret non-empty" (not (T.null secretField))
-    expiryField @?= 0
 
     st <- readMVar stateVar
     case Map.lookup clientId (registered_clients st) of

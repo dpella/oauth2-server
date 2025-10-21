@@ -34,11 +34,13 @@ library
     , PolyKinds
     , RankNTypes
     , TypeApplications
+    , TypeFamilies
   hs-source-dirs:
     src
   exposed-modules:
     Web.OAuth
     Web.OAuth.Types
+    Web.OAuth.Internal
   other-modules:
     Web.OAuth.TokenAPI
     Web.OAuth.AuthorizeAPI
@@ -70,6 +72,17 @@ test-suite test-oauth
   type: exitcode-stdio-1.0
   default-language:
     Haskell2010
+  default-extensions:
+      DataKinds
+    , FlexibleInstances
+    , GADTs
+    , GeneralizedNewtypeDeriving
+    , ImportQualifiedPost
+    , LambdaCase
+    , OverloadedStrings
+    , PolyKinds
+    , RankNTypes
+    , TypeApplications
   hs-source-dirs:
     test
   main-is:
@@ -98,6 +111,9 @@ test-suite test-oauth
     , servant
     , servant-server
     , servant-auth-server
+    , servant-blaze
+    , network-uri
+    , http-api-data
     , wai
     , wai-extra
     , http-types
@@ -109,3 +125,4 @@ test-suite test-oauth
     , base64-bytestring
     , blaze-html
     , blaze-markup
+    , transformers

@@ -9,7 +9,7 @@
 -- |
 -- Module:      Web.OAuth.TokenAPI
 -- Copyright:   (c) DPella AB 2025
--- License:     LicenseRef-AllRightsReserved
+-- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
 --
 -- OAuth 2.1 Token Endpoint for DPella.
@@ -233,31 +233,46 @@ handleTokenRequest state_var ctxt TokenRequest{..} = do
                                           case accessTokenResult of
                                             Left err -> pure (state, Left err)
                                             Right accessToken -> do
-                                              newRefreshToken <- generateToken
-                                              let refreshRecord =
-                                                    RefreshToken
-                                                      { refresh_token_value = newRefreshToken
-                                                      , refresh_token_client_id = client_id
-                                                      , refresh_token_user = auth_code_user
-                                                      , refresh_token_scope = auth_code_scope
-                                                      }
+                                              let refreshAllowed = "refresh_token" `elem` registered_client_grant_types
                                                   persistence = refresh_token_persistence state
-                                              persistRefreshToken persistence refreshRecord
-                                              let newState =
+                                                  cleanedState =
                                                     state
                                                       { auth_codes = Map.delete authCodeValue (auth_codes state)
                                                       }
-                                              pure
-                                                ( newState
-                                                , Right
-                                                    TokenResponse
-                                                      { access_token = accessToken
-                                                      , token_type = "Bearer"
-                                                      , expires_in = 3600
-                                                      , refresh_token_resp = Just newRefreshToken
-                                                      , scope = Just auth_code_scope
-                                                      }
-                                                )
+                                              if refreshAllowed
+                                                then do
+                                                  newRefreshToken <- generateToken
+                                                  let refreshRecord =
+                                                        RefreshToken
+                                                          { refresh_token_value = newRefreshToken
+                                                          , refresh_token_client_id = client_id
+                                                          , refresh_token_user = auth_code_user
+                                                          , refresh_token_scope = auth_code_scope
+                                                          }
+                                                  persistRefreshToken persistence refreshRecord
+                                                  pure
+                                                    ( cleanedState
+                                                    , Right
+                                                        TokenResponse
+                                                          { access_token = accessToken
+                                                          , token_type = "Bearer"
+                                                          , expires_in = 3600
+                                                          , refresh_token_resp = Just newRefreshToken
+                                                          , scope = Just auth_code_scope
+                                                          }
+                                                    )
+                                                else
+                                                  pure
+                                                    ( cleanedState
+                                                    , Right
+                                                        TokenResponse
+                                                          { access_token = accessToken
+                                                          , token_type = "Bearer"
+                                                          , expires_in = 3600
+                                                          , refresh_token_resp = Nothing
+                                                          , scope = Just auth_code_scope
+                                                          }
+                                                    )
                                       | otherwise ->
                                           pure (state, Left $ badTokenRequest "invalid_grant" "Invalid code verifier")
                                     _ ->
