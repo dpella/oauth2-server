@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module OAuth.TestUtils where
+module Web.OAuth.TestUtils where
 
 import Control.Concurrent.MVar
 import Data.Aeson (FromJSON, ToJSON)
@@ -15,7 +15,7 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Time.Clock
 import GHC.Generics (Generic)
-import OAuth.Types
+import Web.OAuth.Types
 import Servant (Context (EmptyContext, (:.)))
 import Servant.Auth.Server
 

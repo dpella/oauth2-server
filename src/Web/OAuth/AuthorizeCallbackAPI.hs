@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- |
--- Module:      OAuth.AuthorizeCallbackAPI
+-- Module:      Web.OAuth.AuthorizeCallbackAPI
 -- Copyright:   (c) DPella AB 2025
 -- License:     LicenseRef-AllRightsReserved
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
@@ -20,22 +20,22 @@
 --
 -- The module implements PKCE (Proof Key for Code Exchange) support as defined
 -- in RFC 7636 to protect against authorization code interception attacks.
-module OAuth.AuthorizeCallbackAPI where
+module Web.OAuth.AuthorizeCallbackAPI where
 
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class (liftIO)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
 import Data.Time.Clock
 import GHC.Generics
 import Network.URI (escapeURIString, isUnescapedInURIComponent)
-import OAuth.Types
+import Web.OAuth.Types
 import Servant
 import Servant.Auth.Server (AuthResult (..))
 import Servant.HTML.Blaze
-import Text.Blaze.Html5 qualified as H
-import Text.Blaze.Html5.Attributes qualified as A
+import Text.Blaze.Html5 (Html)
 import Web.FormUrlEncoded (FromForm (..), parseMaybe, parseUnique)
 
 -- | Form data submitted from the OAuth login page.
@@ -84,7 +84,7 @@ type AuthorizeCallbackAPI =
   "authorize"
     :> "callback"
     :> ReqBody '[FormUrlEncoded] LoginForm
-    :> Post '[HTML] H.Html
+    :> Post '[HTML] Html
 
 -- | Handle the authorization callback after user submits login credentials.
 --
@@ -96,14 +96,13 @@ type AuthorizeCallbackAPI =
 -- 4. Redirects the user back to the client with the authorization code
 -- 5. If authentication fails, redirects back to the login form with an error
 --
--- The function uses meta refresh for redirects to ensure compatibility
--- with various client implementations.
+-- Responses use HTTP redirects (303 See Other) with appropriate Location headers.
 handleAuthorizeCallback
   :: (FormAuth usr, HasContextEntry ctxt (FormAuthSettings usr))
   => MVar (OAuthState usr)
   -> Context ctxt
   -> LoginForm
-  -> Handler H.Html
+  -> Handler Html
 handleAuthorizeCallback state_var ctxt LoginForm{..} = do
   auth_user <- liftIO $ runFormAuth ctxt username password
   case auth_user of
@@ -126,42 +125,47 @@ handleAuthorizeCallback state_var ctxt LoginForm{..} = do
         return s{auth_codes = Map.insert auth_code new_auth_code (auth_codes s)}
 
       let redirect_url =
-            T.unpack login_redirect_uri
-              <> "?code="
-              <> escapeURIString isUnescapedInURIComponent (T.unpack auth_code)
-              <> "&state="
-              <> escapeURIString isUnescapedInURIComponent (T.unpack login_state)
-
-      return $ H.docTypeHtml $ do
-        H.head $ do
-          H.title "Redirecting..."
-          H.meta H.! A.httpEquiv "refresh" H.! A.content (H.toValue $ "0; url=" <> redirect_url)
-        H.body $ do
-          H.p $ do
-            "Redirecting to "
-            H.a H.! A.href (H.toValue redirect_url) $ H.toHtml login_redirect_uri
-            "..."
+            buildRedirectUrl
+              login_redirect_uri
+              [("code", auth_code), ("state", login_state)]
+      redirect303 redirect_url
     _ -> do
-      let redirect_url =
-            "/authorize"
-              <> "?response_type=code"
-              <> "&client_id="
-              <> escapeURIString isUnescapedInURIComponent (T.unpack login_client_id)
-              <> "&redirect_uri="
-              <> escapeURIString isUnescapedInURIComponent (T.unpack login_redirect_uri)
-              <> "&scope="
-              <> escapeURIString isUnescapedInURIComponent (T.unpack login_scope)
-              <> "&state="
-              <> escapeURIString isUnescapedInURIComponent (T.unpack login_state)
-              <> maybe "" (\cc -> "&code_challenge=" <> escapeURIString isUnescapedInURIComponent (T.unpack cc)) login_code_challenge
-              <> maybe
-                ""
-                (\ccm -> "&code_challenge_method=" <> escapeURIString isUnescapedInURIComponent (T.unpack ccm))
-                login_code_challenge_method
-              <> "&error=invalid_password"
-      return $ H.docTypeHtml $ do
-        H.head $ do
-          H.title "Redirecting..."
-          H.meta H.! A.httpEquiv "refresh" H.! A.content (H.toValue $ "0; url=" <> redirect_url)
-        H.body $ do
-          H.p "Invalid credentials. Redirecting back..."
+      let base = "/authorize"
+          params =
+            [ ("response_type", "code")
+            , ("client_id", login_client_id)
+            , ("redirect_uri", login_redirect_uri)
+            , ("scope", login_scope)
+            , ("state", login_state)
+            ]
+              <> maybeParam "code_challenge" login_code_challenge
+              <> maybeParam "code_challenge_method" login_code_challenge_method
+              <> [("error", "invalid_password")]
+      redirect303 (buildRedirectUrl base params)
+  where
+    redirect303 :: Text -> Handler Html
+    redirect303 location =
+      throwError err303{errHeaders = [("Location", TE.encodeUtf8 location)]}
+
+    maybeParam :: Text -> Maybe Text -> [(Text, Text)]
+    maybeParam key = maybe [] (\value -> [(key, value)])
+
+    buildRedirectUrl :: Text -> [(Text, Text)] -> Text
+    buildRedirectUrl baseUri params =
+      let (baseWithoutFragment, fragmentPart) = T.breakOn "#" baseUri
+          fragmentSuffix =
+            if T.null fragmentPart
+              then ""
+              else T.cons '#' (T.drop 1 fragmentPart)
+          encodedParams =
+            T.intercalate "&" $ fmap encodeParam params
+          baseWithQuery
+            | T.null encodedParams = baseWithoutFragment
+            | "?" `T.isInfixOf` baseWithoutFragment = baseWithoutFragment <> "&" <> encodedParams
+            | otherwise = baseWithoutFragment <> "?" <> encodedParams
+      in  baseWithQuery <> fragmentSuffix
+
+    encodeParam :: (Text, Text) -> Text
+    encodeParam (key, value) =
+      let encode = T.pack . escapeURIString isUnescapedInURIComponent . T.unpack
+      in  encode key <> "=" <> encode value

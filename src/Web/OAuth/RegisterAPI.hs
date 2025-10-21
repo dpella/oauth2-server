@@ -5,7 +5,7 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- |
--- Module:      OAuth.RegisterAPI
+-- Module:      Web.OAuth.RegisterAPI
 -- Copyright:   (c) DPella AB 2025
 -- License:     LicenseRef-AllRightsReserved
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
@@ -19,7 +19,7 @@
 -- Registered clients receive a unique client_id that must be used in all
 -- subsequent OAuth flows. The registration process collects client metadata
 -- including redirect URIs, grant types, and requested scopes.
-module OAuth.RegisterAPI where
+module Web.OAuth.RegisterAPI where
 
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class (liftIO)
@@ -28,7 +28,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import GHC.Generics
-import OAuth.Types
+import Web.OAuth.Types
 import Servant
 
 -- | Servant API type for the OAuth dynamic client registration endpoint.
@@ -74,6 +74,10 @@ data ClientRegistrationResponse = ClientRegistrationResponse
   -- ^ Unique identifier assigned to the client
   , reg_client_name :: Text
   -- ^ Registered human-readable name
+  , reg_client_secret :: Maybe Text
+  -- ^ Secret issued to confidential clients (Nothing for public clients)
+  , reg_client_secret_expires_at :: Maybe Int
+  -- ^ Epoch seconds when the secret expires (Nothing means unspecified)
   , reg_redirect_uris :: [Text]
   -- ^ Registered redirect URIs
   , reg_grant_types :: [Text]
@@ -92,6 +96,8 @@ instance ToJSON ClientRegistrationResponse where
     object
       [ "client_id" .= reg_client_id
       , "client_name" .= reg_client_name
+      , "client_secret" .= reg_client_secret
+      , "client_secret_expires_at" .= reg_client_secret_expires_at
       , "redirect_uris" .= reg_redirect_uris
       , "grant_types" .= reg_grant_types
       , "response_types" .= reg_response_types
@@ -145,6 +151,8 @@ handleRegister state_var ClientRegistrationRequest{..} = do
     ClientRegistrationResponse
       { reg_client_id = client_id
       , reg_client_name = client_name
+      , reg_client_secret = secret'
+      , reg_client_secret_expires_at = fmap (const 0) secret'
       , reg_redirect_uris = redirect_uris
       , reg_grant_types = default_grant_types
       , reg_response_types = default_response_types

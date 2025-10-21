@@ -1,6 +1,6 @@
 module Main where
 
-import qualified OAuth.FlowSpec
+import qualified Web.OAuth.FlowSpec
 import Test.Tasty
 
 main :: IO ()
@@ -10,5 +10,5 @@ tests :: TestTree
 tests =
   testGroup
     "OAuth Tests"
-    [ OAuth.FlowSpec.tests
+    [ Web.OAuth.FlowSpec.tests
     ]

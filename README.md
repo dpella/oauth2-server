@@ -63,8 +63,8 @@ import Network.Wai (Application)
 import Network.Wai.Handler.Warp (run)
 import Servant
 import Servant.Auth.Server
-import OAuth (OAuthAPI, oAuthAPI)
-import OAuth.Types
+import Web.OAuth (OAuthAPI, oAuthAPI)
+import Web.OAuth.Types
 
 -- Your application user type and JWT instances
 data User = User { userId :: Text } deriving (Show, Generic)
@@ -195,4 +195,3 @@ cabal test
 ## License
 
 See `LICENSE` in this repository.
-

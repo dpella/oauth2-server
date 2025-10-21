@@ -5,7 +5,7 @@
 {-# LANGUAGE TypeFamilies #-}
 
 -- |
--- Module:      OAuth.Types
+-- Module:      Web.OAuth.Types
 -- Copyright:   (c) DPella AB 2025
 -- License:     LicenseRef-AllRightsReserved
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
@@ -20,18 +20,20 @@
 --
 -- The types support the OAuth 2.1 authorization code flow with PKCE
 -- as defined in RFC 6749 and RFC 7636.
-module OAuth.Types where
+module Web.OAuth.Types where
 
 import Control.Concurrent.MVar (modifyMVar_, newMVar, readMVar)
 import Data.Aeson (defaultOptions, omitNothingFields)
 import Data.Aeson.TH (deriveJSON)
 import Data.Map.Strict qualified as Map
-import Data.Text (Text, pack)
+import Data.Text (Text)
+import Data.Text.Encoding qualified as TE
 import Data.Time.Clock
 import GHC.Generics
 import Servant (Context, HasContextEntry)
 import Servant.Auth.Server (AuthResult (..))
-import System.Random
+import Crypto.Random (getRandomBytes)
+import Data.ByteString.Base64.URL qualified as B64URL
 
 -- | Authorization code issued after successful authentication.
 --
@@ -182,17 +184,13 @@ type Token = Text
 
 -- | Generate a cryptographically secure random token.
 --
--- Produces a 32-character alphanumeric token suitable for use as
--- authorization codes, refresh tokens, or client identifiers.
---
--- The token uses characters from [a-zA-Z0-9] for URL safety.
+-- Produces a Base64URL-encoded token derived from 32 bytes of
+-- cryptographic entropy. The output is URL-safe and suitable for
+-- use as authorization codes, refresh tokens, or client identifiers.
 generateToken :: IO Token
 generateToken = do
-  gen <- newStdGen
-  let chars = ['a' .. 'z'] <> ['A' .. 'Z'] <> ['0' .. '9']
-      token_length = 32
-      token = take token_length $ [chars !! (i `mod` length chars) | i <- randoms gen]
-  return $ pack token
+  bytes <- getRandomBytes 32
+  pure $ TE.decodeUtf8 (B64URL.encodeUnpadded bytes)
 
 -- | Class for verifying user credentials from username and password
 class FormAuth usr where

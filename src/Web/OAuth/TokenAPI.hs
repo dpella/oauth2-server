@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- |
--- Module:      OAuth.TokenAPI
+-- Module:      Web.OAuth.TokenAPI
 -- Copyright:   (c) DPella AB 2025
 -- License:     LicenseRef-AllRightsReserved
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
@@ -24,7 +24,7 @@
 --
 -- All tokens are validated against the registered client information
 -- and PKCE challenges when applicable.
-module OAuth.TokenAPI where
+module Web.OAuth.TokenAPI where
 
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class (liftIO)
@@ -40,12 +40,11 @@ import Data.Text qualified as T
 import Data.Text.Encoding qualified as T
 import Data.Time.Clock
 import GHC.Generics
-import OAuth.Types
+import Web.OAuth.Types
 import Servant
 import Servant.Auth.Server
 import Web.FormUrlEncoded (FromForm (..))
 import Prelude hiding (error)
-import Prelude qualified as Prelude
 
 -- | Servant API type for the OAuth token endpoint.
 --
@@ -161,7 +160,7 @@ handleTokenRequest state_var ctxt TokenRequest{..} = do
       now <- liftIO $ getCurrentTime
       jwt_res <- liftIO $ makeJWT user jwt_cfg $ Just (addUTCTime 3600 now)
       case jwt_res of
-        Left err -> Prelude.error $ show err
+        Left _ -> internalServerError "Failed to sign access token"
         Right token ->
           return $ T.pack $ BSL.unpack token
 
@@ -192,6 +191,10 @@ handleTokenRequest state_var ctxt TokenRequest{..} = do
     tokenAuthFailure :: Text -> Text -> Handler TokenResponse
     tokenAuthFailure error_code error_description =
       throwError err401{errBody = encode $ (oAuthError error_code){error_description = Just error_description}}
+
+    internalServerError :: Text -> Handler a
+    internalServerError message =
+      throwError err500{errBody = encode $ (oAuthError "server_error"){error_description = Just message}}
 
     handleAuthCode :: OAuthState usr -> Handler TokenResponse
     handleAuthCode state = do

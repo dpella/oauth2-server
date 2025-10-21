@@ -1,8 +1,10 @@
 cabal-version:      2.2
 name:               oauth
-version:            0.1.0.0
-license:            LicenseRef-AllRightsReserved
+version:            0.2.0.0
+license:            MPL-2.0
+license-file:       LICENSE
 author:             DPella AB
+extra-doc-files:    CHANGELOG.md, README.md
 maintainer:         matti@dpella.io,
                     lobo@dpella.io
 synopsis:           OAuth 2.1 authorization server implementation
@@ -35,14 +37,14 @@ library
   hs-source-dirs:
     src
   exposed-modules:
-    OAuth
-    OAuth.Types
+    Web.OAuth
+    Web.OAuth.Types
   other-modules:
-    OAuth.TokenAPI
-    OAuth.AuthorizeAPI
-    OAuth.AuthorizeCallbackAPI
-    OAuth.RegisterAPI
-    OAuth.MetadataAPI
+    Web.OAuth.TokenAPI
+    Web.OAuth.AuthorizeAPI
+    Web.OAuth.AuthorizeCallbackAPI
+    Web.OAuth.RegisterAPI
+    Web.OAuth.MetadataAPI
   build-depends:
       base >=4.18 && <4.19
     , servant >=0.20.3.0 && <0.21
@@ -72,8 +74,8 @@ test-suite test-oauth
   main-is:
     Main.hs
   other-modules:
-    OAuth.FlowSpec
-    OAuth.TestUtils
+    Web.OAuth.FlowSpec
+    Web.OAuth.TestUtils
   build-depends:
       base >=4.18 && <4.19
     , oauth
@@ -96,6 +98,7 @@ test-suite test-oauth
     , warp
     , cryptonite
     , memory
+    , scientific
     , base64-bytestring
     , blaze-html
     , blaze-markup
