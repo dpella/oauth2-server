@@ -21,11 +21,14 @@
 module Web.OAuth.AuthorizeAPI where
 
 import Control.Concurrent.MVar
+import Control.Monad (forM_)
 import Control.Monad.IO.Class (liftIO)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
+import Network.URI (escapeURIString, isUnescapedInURIComponent)
 import Web.OAuth.Types
 import Servant
 import Servant.HTML.Blaze
@@ -111,7 +114,7 @@ handleAuthorize
           then
             if validateScope scope registered_client_scope
               then return (login_form cid redirect_uri)
-              else badRequest "invalid_scope" "Requested scope is not allowed for this client"
+              else redirectWithError redirect_uri "invalid_scope" (Just "Requested scope is not allowed for this client")
           else badRequest "unauthorized_client" "Invalid redirect URI for client"
       Nothing -> authError "unauthorized_client" "Client not registered or invalid client_id"
   where
@@ -132,7 +135,6 @@ handleAuthorize
       throwError $ oauthErrorResponse err401 error_code (Just desc)
 
     scope = fromMaybe "" mb_scope
-    state = fromMaybe "" mb_state
 
     login_form :: Text -> Text -> H.Html
     login_form clientId redirectUri = H.docTypeHtml $ do
@@ -163,7 +165,8 @@ handleAuthorize
             H.input H.! A.type_ "hidden" H.! A.name "client_id" H.! A.value (H.toValue clientId)
             H.input H.! A.type_ "hidden" H.! A.name "redirect_uri" H.! A.value (H.toValue redirectUri)
             H.input H.! A.type_ "hidden" H.! A.name "scope" H.! A.value (H.toValue scope)
-            H.input H.! A.type_ "hidden" H.! A.name "state" H.! A.value (H.toValue state)
+            forM_ mb_state $ \st ->
+              H.input H.! A.type_ "hidden" H.! A.name "state" H.! A.value (H.toValue st)
             case code_challenge of
               Just cc -> H.input H.! A.type_ "hidden" H.! A.name "code_challenge" H.! A.value (H.toValue cc)
               Nothing -> mempty
@@ -176,6 +179,38 @@ handleAuthorize
               H.input H.! A.type_ "password" H.! A.name "password" H.! A.placeholder "Password" H.! A.required ""
 
             H.button H.! A.type_ "submit" $ "Sign In"
+
+    redirectWithError :: Text -> Text -> Maybe Text -> Handler a
+    redirectWithError redirectUri errorCode errorDescription =
+      let params =
+            [("error", errorCode)]
+              <> maybeParam "error_description" errorDescription
+              <> maybeParam "state" mb_state
+          location = buildRedirectUrl redirectUri params
+      in  throwError err303{errHeaders = [("Location", TE.encodeUtf8 location)]}
+
+    maybeParam :: Text -> Maybe Text -> [(Text, Text)]
+    maybeParam key = maybe [] (\value -> [(key, value)])
+
+    buildRedirectUrl :: Text -> [(Text, Text)] -> Text
+    buildRedirectUrl baseUri params =
+      let (baseWithoutFragment, fragmentPart) = T.breakOn "#" baseUri
+          fragmentSuffix =
+            if T.null fragmentPart
+              then ""
+              else T.cons '#' (T.drop 1 fragmentPart)
+          encodedParams =
+            T.intercalate "&" $ fmap encodeParam params
+          baseWithQuery
+            | T.null encodedParams = baseWithoutFragment
+            | "?" `T.isInfixOf` baseWithoutFragment = baseWithoutFragment <> "&" <> encodedParams
+            | otherwise = baseWithoutFragment <> "?" <> encodedParams
+      in  baseWithQuery <> fragmentSuffix
+
+    encodeParam :: (Text, Text) -> Text
+    encodeParam (key, value) =
+      let pctEncode = T.pack . escapeURIString isUnescapedInURIComponent . T.unpack
+      in  pctEncode key <> "=" <> pctEncode value
 
 -- | Validate that the requested scope is a subset of the client's allowed scopes.
 --

@@ -14,7 +14,7 @@ import Data.Map.Strict qualified as Map
 import Data.Scientific (toBoundedInteger)
 import Data.Text (Text)
 import Data.Text qualified as T
-import Network.HTTP.Types (hContentType, methodPost, status200)
+import Network.HTTP.Types (hContentType, methodPost, status200, status400)
 import Network.Wai (Application, requestHeaders, requestMethod)
 import Network.Wai.Test
 import Test.Tasty
@@ -29,6 +29,9 @@ tests =
     [ appliesDefaultsForPublicClients
     , issuesSecretForConfidentialClients
     , honorsRequestedScope
+    , rejectsEmptyRedirectUris
+    , rejectsRelativeRedirectUris
+    , rejectsInsecureRedirectUris
     ]
 
 withApp :: (MVar (OAuthState TestUser) -> Application -> IO a) -> IO a
@@ -53,6 +56,12 @@ extractObject body =
     Left err -> assertFailure ("Failed to decode registration response: " <> err)
     Right (Object o) -> pure o
     Right _ -> assertFailure "Expected JSON object in registration response"
+
+decodeRegistrationError :: LBS.ByteString -> IO OAuthError
+decodeRegistrationError body =
+  case eitherDecode body of
+    Left err -> assertFailure ("Failed to decode registration error: " <> err)
+    Right val -> pure val
 
 appliesDefaultsForPublicClients :: TestTree
 appliesDefaultsForPublicClients = testCase "fills defaults for omitted fields" $
@@ -161,3 +170,48 @@ honorsRequestedScope = testCase "persists provided scope field" $
           Nothing -> assertFailure "registered client missing from state"
           Just client -> registered_client_scope client @?= customScope
       _ -> assertFailure "client_id missing in response"
+
+rejectsEmptyRedirectUris :: TestTree
+rejectsEmptyRedirectUris = testCase "rejects registrations without redirect URIs" $
+  withApp $ \_ app -> do
+    res <-
+      registerClient
+        app
+        ( object
+            [ "client_name" .= ("No Redirects" :: Text)
+            , "redirect_uris" .= ([] :: [Text])
+            ]
+        )
+    simpleStatus res @?= status400
+    err <- decodeRegistrationError (simpleBody res)
+    Web.OAuth.Types.error err @?= "invalid_client_metadata"
+
+rejectsRelativeRedirectUris :: TestTree
+rejectsRelativeRedirectUris = testCase "rejects non-absolute redirect URIs" $
+  withApp $ \_ app -> do
+    res <-
+      registerClient
+        app
+        ( object
+            [ "client_name" .= ("Relative Redirect" :: Text)
+            , "redirect_uris" .= ["/callback" :: Text]
+            ]
+        )
+    simpleStatus res @?= status400
+    err <- decodeRegistrationError (simpleBody res)
+    Web.OAuth.Types.error err @?= "invalid_client_metadata"
+
+rejectsInsecureRedirectUris :: TestTree
+rejectsInsecureRedirectUris = testCase "rejects non-loopback http redirect URIs" $
+  withApp $ \_ app -> do
+    res <-
+      registerClient
+        app
+        ( object
+            [ "client_name" .= ("Insecure Redirect" :: Text)
+            , "redirect_uris" .= ["http://example.com/callback" :: Text]
+            ]
+        )
+    simpleStatus res @?= status400
+    err <- decodeRegistrationError (simpleBody res)
+    Web.OAuth.Types.error err @?= "invalid_client_metadata"

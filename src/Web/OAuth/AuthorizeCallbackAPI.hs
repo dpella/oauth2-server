@@ -56,8 +56,8 @@ data LoginForm = LoginForm
   -- ^ Client's redirect URI
   , login_scope :: Text
   -- ^ Requested OAuth scopes
-  , login_state :: Text
-  -- ^ Client's state parameter
+  , login_state :: Maybe Text
+  -- ^ Client's state parameter (optional)
   , login_code_challenge :: Maybe Text
   -- ^ PKCE code challenge
   , login_code_challenge_method :: Maybe Text
@@ -73,7 +73,7 @@ instance FromForm LoginForm where
       <*> parseUnique "client_id" f
       <*> parseUnique "redirect_uri" f
       <*> parseUnique "scope" f
-      <*> parseUnique "state" f
+      <*> parseMaybe "state" f
       <*> parseMaybe "code_challenge" f
       <*> parseMaybe "code_challenge_method" f
 
@@ -145,7 +145,7 @@ handleAuthorizeCallback state_var ctxt LoginForm{..} = do
       let redirect_url =
             buildRedirectUrl
               login_redirect_uri
-              [("code", auth_code), ("state", login_state)]
+              (("code", auth_code) : maybeParam "state" login_state)
       redirect303 redirect_url
     _ -> do
       let base = "/authorize"
@@ -154,10 +154,10 @@ handleAuthorizeCallback state_var ctxt LoginForm{..} = do
             , ("client_id", login_client_id)
             , ("redirect_uri", login_redirect_uri)
             , ("scope", login_scope)
-            , ("state", login_state)
             ]
               <> maybeParam "code_challenge" login_code_challenge
               <> maybeParam "code_challenge_method" login_code_challenge_method
+              <> maybeParam "state" login_state
               <> [("error", "invalid_password")]
       redirect303 (buildRedirectUrl base params)
   where

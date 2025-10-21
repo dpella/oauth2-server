@@ -27,6 +27,7 @@ tests =
     , rejectsTamperedRedirectUri
     , rejectsInvalidScope
     , rejectsMissingPkce
+    , successfulLoginWithoutStateSkipsEcho
     ]
 
 withApp :: (MVar (OAuthState TestUser) -> Application -> IO a) -> IO a
@@ -197,6 +198,39 @@ rejectsMissingPkce = testCase "rejects requests missing PKCE code_challenge" $
     Web.OAuth.Types.error err @?= "invalid_request"
     st <- readMVar stateVar
     Map.size (auth_codes st) @?= 0
+
+successfulLoginWithoutStateSkipsEcho :: TestTree
+successfulLoginWithoutStateSkipsEcho = testCase "does not add state parameter when none provided" $
+  withApp $ \stateVar app -> do
+    let challenge = "verifier456"
+        formBody =
+          encodeForm
+            [ ("username", "testuser")
+            , ("password", "testpass")
+            , ("client_id", "client-1")
+            , ("redirect_uri", "http://localhost:4000/cb")
+            , ("scope", "read")
+            , ("code_challenge", challenge)
+            , ("code_challenge_method", "plain")
+            ]
+        req =
+          SRequest
+            ( setPath defaultRequest "/authorize/callback"
+                ){ requestMethod = methodPost
+                 , requestHeaders = [(hContentType, "application/x-www-form-urlencoded")]
+                 }
+            formBody
+    res <- runSession (srequest req) app
+    simpleStatus res @?= status303
+    let location = lookup hLocation (simpleHeaders res)
+    case location of
+      Nothing -> assertFailure "Location header missing"
+      Just loc -> do
+        let locText = TE.decodeUtf8 loc
+        assertBool "redirected to provided redirect_uri" ("http://localhost:4000/cb" `T.isPrefixOf` locText)
+        assertBool "state parameter absent" (not ("state=" `T.isInfixOf` locText))
+    st <- readMVar stateVar
+    Map.size (auth_codes st) @?= 1
 
 decodeError :: LBS.ByteString -> IO OAuthError
 decodeError body =

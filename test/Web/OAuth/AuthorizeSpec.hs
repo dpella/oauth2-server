@@ -8,7 +8,9 @@ import Control.Concurrent.MVar (MVar)
 import Data.Aeson (eitherDecode)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
-import Network.HTTP.Types (hContentType, status200, status400, status401)
+import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
+import Network.HTTP.Types (hContentType, hLocation, status200, status303, status400, status401)
 import Network.HTTP.Types.URI (renderQuery)
 import Network.Wai (Application)
 import Network.Wai.Test
@@ -26,6 +28,7 @@ tests =
     , rejectsInvalidScope
     , rendersLoginFormWithPkce
     , echoesErrorMessage
+    , omitsStateHiddenFieldWhenAbsent
     , missingParametersReturnInvalidRequest
     ]
 
@@ -97,10 +100,13 @@ rejectsInvalidScope = testCase "400 when scope exceeds client allow list" $
       runSession
         (srequest (SRequest (setPath defaultRequest path) LBS.empty))
         app
-    simpleStatus res @?= status400
-    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
-    errResp <- reconstructError (simpleBody res)
-    Web.OAuth.Types.error errResp @?= "invalid_scope"
+    simpleStatus res @?= status303
+    case lookup hLocation (simpleHeaders res) of
+      Nothing -> assertFailure "Missing Location header for invalid_scope redirect"
+      Just loc -> do
+        let locText = TE.decodeUtf8 loc
+        assertBool "error parameter present" ("error=invalid_scope" `T.isInfixOf` locText)
+        assertBool "state preserved in redirect" ("state=s" `T.isInfixOf` locText)
 
 rendersLoginFormWithPkce :: TestTree
 rendersLoginFormWithPkce = testCase "renders login form for valid request including PKCE fields" $
@@ -146,6 +152,25 @@ echoesErrorMessage = testCase "renders login form with error message when provid
     simpleStatus res @?= status200
     let bodyTxt = LBS.toStrict (simpleBody res)
     assertBool "error message rendered" ("Invalid username or password" `BS.isInfixOf` bodyTxt)
+
+omitsStateHiddenFieldWhenAbsent :: TestTree
+omitsStateHiddenFieldWhenAbsent = testCase "does not propagate state when request omitted it" $
+  withApp $ \stateVar app -> do
+    addRegisteredClientToState stateVar (mkPublicClient "cid-5" ["http://localhost:4000/cb"] "read")
+    let query =
+          [ ("response_type", Just "code")
+          , ("client_id", Just "cid-5")
+          , ("redirect_uri", Just "http://localhost:4000/cb")
+          , ("scope", Just "read")
+          ]
+        path = BS.concat ["/authorize", renderQuery True query]
+    res <-
+      runSession
+        (srequest (SRequest (setPath defaultRequest path) LBS.empty))
+        app
+    simpleStatus res @?= status200
+    let bodyTxt = LBS.toStrict (simpleBody res)
+    assertBool "state input absent" (not ("name=\"state\"" `BS.isInfixOf` bodyTxt))
 
 missingParametersReturnInvalidRequest :: TestTree
 missingParametersReturnInvalidRequest = testCase "returns JSON invalid_request when required params absent" $
