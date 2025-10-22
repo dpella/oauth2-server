@@ -54,4 +54,4 @@ oAuthAPI state_var ctxt =
     :<|> handleAuthorize state_var
     :<|> handleAuthorizeCallback state_var ctxt
     :<|> handleTokenRequest state_var ctxt
-    :<|> handleRegister state_var
+    :<|> registerServer state_var

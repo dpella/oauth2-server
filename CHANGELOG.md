@@ -1,6 +1,9 @@
 # Changelog
 
 # Unreleased
+## Added
+- Dynamic client management endpoint at `/register/{client_id}` supporting GET/PUT/DELETE for registrations authenticated via the issued `registration_access_token`.
+
 ## Security
 - Token endpoint responses now include `Cache-Control: no-store` and `Pragma: no-cache`, preventing intermediaries from caching bearer tokens.
 - Authorization login form no longer fabricates an empty `state` value; parameters are only echoed when provided by the client, preserving CSRF protection for state-less callers.

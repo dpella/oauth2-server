@@ -22,9 +22,11 @@
 module Web.OAuth.RegisterAPI where
 
 import Control.Concurrent.MVar
-import Control.Monad (forM_, when)
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Data.Aeson
+import Data.ByteString.Char8 qualified as BS8
+import Data.List (foldl')
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -42,6 +44,22 @@ type RegisterAPI =
   "register"
     :> ReqBody '[JSON] ClientRegistrationRequest
     :> PostCreated '[JSON] ClientRegistrationResponse
+  :<|>
+  "register"
+    :> Capture "client_id" Text
+    :> Header "Authorization" Text
+    :> Get '[JSON] ClientRegistrationResponse
+  :<|>
+  "register"
+    :> Capture "client_id" Text
+    :> Header "Authorization" Text
+  :> ReqBody '[JSON] ClientRegistrationRequest
+  :> Put '[JSON] ClientRegistrationResponse
+  :<|>
+  "register"
+    :> Capture "client_id" Text
+    :> Header "Authorization" Text
+    :> Verb 'DELETE 204 '[JSON] NoContent
 
 -- | Request payload for dynamic client registration.
 --
@@ -127,101 +145,292 @@ instance ToJSON ClientRegistrationResponse where
 -- 3. Stores the client registration in the OAuth state
 -- 4. Returns the complete client registration details
 --
+registerServer :: forall usr. MVar (OAuthState usr) -> Server RegisterAPI
+registerServer state_var =
+  handleRegister state_var
+    :<|> handleRegistrationGet state_var
+    :<|> handleRegistrationUpdate state_var
+    :<|> handleRegistrationDelete state_var
+
+data NormalizedRegistration = NormalizedRegistration
+  { normGrantTypes :: [Text]
+  , normResponseTypes :: [Text]
+  , normScope :: Text
+  , normAuthMethod :: Text
+  , normSecret :: Maybe Text
+  }
+
+-- | Handle dynamic client registration requests.
+--
 -- The client_id is generated using a secure random token generator.
 handleRegister :: forall usr. MVar (OAuthState usr) -> ClientRegistrationRequest -> Handler ClientRegistrationResponse
-handleRegister state_var ClientRegistrationRequest{..} = do
-  OAuthState{oauth_url = rawBaseUrl, oauth_port = basePort} <- liftIO $ readMVar state_var
-  let default_auth_method = fromMaybe "none" token_endpoint_auth_method
-  validateAuthMethod default_auth_method
-  validateRedirectUris redirect_uris
+handleRegister state_var request@ClientRegistrationRequest{..} = do
+  normalized <- liftEitherIO =<< liftIO (normalizeRegistration Nothing request)
   client_id <- ("client_" <>) <$> liftIO generateToken
   registration_access_token <- liftIO generateToken
-  let default_grant_types = fromMaybe ["authorization_code", "refresh_token"] grant_types
-      default_response_types = fromMaybe ["code"] response_types
-      default_scope = fromMaybe "read write" scope
-      -- For confidential clients, generate a secret
-      secret = if default_auth_method /= "none" then Just <$> generateToken else pure Nothing
-  secret' <- liftIO secret
-  let baseUrl = normalizeBaseUrl rawBaseUrl basePort
-      baseForPaths = stripTrailingSlash baseUrl
-      registration_client_uri = appendPathSegment baseForPaths ("/register/" <> client_id)
-  let new_client =
-        RegisteredClient
-          { registered_client_id = client_id
-          , registered_client_name = client_name
-          , registered_client_secret = secret'
-          , registered_client_redirect_uris = redirect_uris
-          , registered_client_grant_types = default_grant_types
-          , registered_client_response_types = default_response_types
-          , registered_client_scope = default_scope
-          , registered_client_token_endpoint_auth_method = default_auth_method
-          , registered_client_registration_access_token = Just registration_access_token
-          }
+  response <-
+    liftIO $
+      modifyMVar state_var $ \s -> do
+        let baseUrl = normalizeBaseUrl (oauth_url s) (oauth_port s)
+            baseForPaths = stripTrailingSlash baseUrl
+            registration_client_uri = appendPathSegment baseForPaths ("/register/" <> client_id)
+            newClient =
+              RegisteredClient
+                { registered_client_id = client_id
+                , registered_client_name = client_name
+                , registered_client_secret = normSecret normalized
+                , registered_client_redirect_uris = redirect_uris
+                , registered_client_grant_types = normGrantTypes normalized
+                , registered_client_response_types = normResponseTypes normalized
+                , registered_client_scope = normScope normalized
+                , registered_client_token_endpoint_auth_method = normAuthMethod normalized
+                , registered_client_registration_access_token = Just registration_access_token
+                }
+            updatedState =
+              s
+                { registered_clients = Map.insert client_id newClient (registered_clients s)
+                }
+            responseValue =
+              buildRegistrationResponse registration_client_uri registration_access_token newClient
+        pure (updatedState, responseValue)
+  pure response
 
-  liftIO $ modifyMVar_ state_var $ \s ->
-    return
-      s
-        { registered_clients = Map.insert client_id new_client (registered_clients s)
-        }
+handleRegistrationGet
+  :: forall usr
+   . MVar (OAuthState usr)
+  -> Text
+  -> Maybe Text
+  -> Handler ClientRegistrationResponse
+handleRegistrationGet state_var clientId mAuth = do
+  state <- liftIO $ readMVar state_var
+  (baseUrl, managementToken, client) <- resolveManagedClient state clientId mAuth
+  let registrationUri = appendPathSegment (stripTrailingSlash baseUrl) ("/register/" <> clientId)
+  pure $ buildRegistrationResponse registrationUri managementToken client
 
-  return
-    ClientRegistrationResponse
-      { reg_client_id = client_id
-      , reg_client_name = client_name
-      , reg_client_secret = secret'
-      , reg_client_secret_expires_at = Nothing
-      , reg_redirect_uris = redirect_uris
-      , reg_grant_types = default_grant_types
-      , reg_response_types = default_response_types
-      , reg_scope = default_scope
-      , reg_token_endpoint_auth_method = default_auth_method
-      , reg_registration_access_token = registration_access_token
-      , reg_registration_client_uri = registration_client_uri
+handleRegistrationUpdate
+  :: forall usr
+   . MVar (OAuthState usr)
+  -> Text
+  -> Maybe Text
+  -> ClientRegistrationRequest
+  -> Handler ClientRegistrationResponse
+handleRegistrationUpdate state_var clientId mAuth request@ClientRegistrationRequest{client_name = newName, redirect_uris = newRedirects} = do
+  result <-
+    liftIO $
+      modifyMVar state_var $ \s -> do
+        let baseUrl = normalizeBaseUrl (oauth_url s) (oauth_port s)
+            baseForPaths = stripTrailingSlash baseUrl
+        case Map.lookup clientId (registered_clients s) of
+          Nothing ->
+            pure (s, Left $ registrationNotFound clientId)
+          Just existing -> do
+            let authCheck = authorizeManagement existing mAuth
+            case authCheck of
+              Left err -> pure (s, Left err)
+              Right token -> do
+                normalizedResult <- normalizeRegistration (Just existing) request
+                case normalizedResult of
+                  Left err -> pure (s, Left err)
+                  Right normalized -> do
+                    let registration_client_uri = appendPathSegment baseForPaths ("/register/" <> clientId)
+                        updatedClient =
+                          existing
+                            { registered_client_name = newName
+                            , registered_client_secret = normSecret normalized
+                            , registered_client_redirect_uris = newRedirects
+                            , registered_client_grant_types = normGrantTypes normalized
+                            , registered_client_response_types = normResponseTypes normalized
+                            , registered_client_scope = normScope normalized
+                            , registered_client_token_endpoint_auth_method = normAuthMethod normalized
+                            }
+                        newState =
+                          s
+                            { registered_clients = Map.insert clientId updatedClient (registered_clients s)
+                            }
+                        responseValue =
+                          buildRegistrationResponse registration_client_uri token updatedClient
+                    pure (newState, Right responseValue)
+  either throwError pure result
+
+handleRegistrationDelete
+  :: forall usr
+   . MVar (OAuthState usr)
+  -> Text
+  -> Maybe Text
+  -> Handler NoContent
+handleRegistrationDelete state_var clientId mAuth = do
+  result <-
+    liftIO $
+      modifyMVar state_var $ \s -> do
+        case Map.lookup clientId (registered_clients s) of
+          Nothing ->
+            pure (s, Left $ registrationNotFound clientId)
+          Just existing ->
+            case authorizeManagement existing mAuth of
+              Left err -> pure (s, Left err)
+              Right _ ->
+                let newState =
+                      s
+                        { registered_clients = Map.delete clientId (registered_clients s)
+                        }
+                in  pure (newState, Right NoContent)
+  either throwError pure result
+
+buildRegistrationResponse
+  :: Text
+  -> Text
+  -> RegisteredClient
+  -> ClientRegistrationResponse
+buildRegistrationResponse registrationUri registrationToken RegisteredClient{..} =
+  ClientRegistrationResponse
+    { reg_client_id = registered_client_id
+    , reg_client_name = registered_client_name
+    , reg_client_secret = registered_client_secret
+    , reg_client_secret_expires_at = Nothing
+    , reg_redirect_uris = registered_client_redirect_uris
+    , reg_grant_types = registered_client_grant_types
+    , reg_response_types = registered_client_response_types
+    , reg_scope = registered_client_scope
+    , reg_token_endpoint_auth_method = registered_client_token_endpoint_auth_method
+    , reg_registration_access_token = registrationToken
+    , reg_registration_client_uri = registrationUri
+    }
+
+authorizeManagement :: RegisteredClient -> Maybe Text -> Either ServerError Text
+authorizeManagement RegisteredClient{registered_client_registration_access_token = Nothing} _ =
+  Left $ oauthErrorResponse err500 "server_error" (Just "Client missing management access token")
+authorizeManagement RegisteredClient{registered_client_registration_access_token = Just expectedToken} mHeader =
+  case extractBearerToken mHeader of
+    Left err -> Left err
+    Right provided ->
+      if provided == expectedToken
+        then Right expectedToken
+        else Left $ addBearerChallenge $ oauthErrorResponse err401 "invalid_token" (Just "Invalid management access token")
+
+resolveManagedClient
+  :: OAuthState usr
+  -> Text
+  -> Maybe Text
+  -> Handler (Text, Text, RegisteredClient)
+resolveManagedClient state clientId mAuth =
+  case Map.lookup clientId (registered_clients state) of
+    Nothing -> throwError $ registrationNotFound clientId
+    Just rc ->
+      case authorizeManagement rc mAuth of
+        Left err -> throwError err
+        Right token -> do
+          let baseUrl = normalizeBaseUrl (oauth_url state) (oauth_port state)
+          pure (baseUrl, token, rc)
+
+normalizeRegistration
+  :: Maybe RegisteredClient
+  -> ClientRegistrationRequest
+  -> IO (Either ServerError NormalizedRegistration)
+normalizeRegistration existing ClientRegistrationRequest{..} = runExceptT $ do
+  exceptEither $ validateRedirectUris redirect_uris
+  let baseGrant = maybe ["authorization_code", "refresh_token"] registered_client_grant_types existing
+      baseResponse = maybe ["code"] registered_client_response_types existing
+      baseScope = maybe "read write" registered_client_scope existing
+      baseAuth = maybe "none" registered_client_token_endpoint_auth_method existing
+      grantTypes = fromMaybe baseGrant grant_types
+      responseTypes = fromMaybe baseResponse response_types
+      resolvedScope = fromMaybe baseScope scope
+      resolvedAuthMethod = fromMaybe baseAuth token_endpoint_auth_method
+  exceptEither $ validateAuthMethod resolvedAuthMethod
+  secret <-
+    case resolvedAuthMethod of
+      "none" -> pure Nothing
+      "client_secret_post" ->
+        case existing of
+          Just RegisteredClient{registered_client_secret = Just existingSecret, registered_client_token_endpoint_auth_method = "client_secret_post"} ->
+            pure (Just existingSecret)
+          _ -> Just <$> liftIO generateToken
+      _ -> pure Nothing
+  pure
+    NormalizedRegistration
+      { normGrantTypes = grantTypes
+      , normResponseTypes = responseTypes
+      , normScope = resolvedScope
+      , normAuthMethod = resolvedAuthMethod
+      , normSecret = secret
       }
+
+validateAuthMethod :: Text -> Either ServerError ()
+validateAuthMethod method
+  | method `elem` ["none", "client_secret_post"] = Right ()
+  | otherwise =
+      Left $ invalidMetadataError "Unsupported token_endpoint_auth_method; expected \"none\" or \"client_secret_post\""
+
+validateRedirectUris :: [Text] -> Either ServerError ()
+validateRedirectUris uris
+  | null uris = Left $ invalidMetadataError "redirect_uris must include at least one absolute URI"
+  | otherwise = foldl' step (Right ()) uris
   where
-    validateAuthMethod :: Text -> Handler ()
-    validateAuthMethod method =
-      when (method `notElem` ["none", "client_secret_post"]) $
-        invalidMetadata "Unsupported token_endpoint_auth_method; expected \"none\" or \"client_secret_post\""
+    step acc uriText = acc >> checkUri uriText
 
-    validateRedirectUris :: [Text] -> Handler ()
-    validateRedirectUris uris = do
-      when (null uris) $
-        invalidMetadata "redirect_uris must include at least one absolute URI"
-      forM_ uris $ \uriText -> do
-        parsedUri <- parseAbsolute uriText
-        when (not (null (URI.uriFragment parsedUri))) $
-          invalidMetadata "redirect_uris must not contain URI fragments"
-        case URI.uriScheme parsedUri of
-          "https:" -> ensureAuthority parsedUri
-          "http:" ->
-            case URI.uriAuthority parsedUri of
-              Just auth
-                | isLoopbackHost (URI.uriRegName auth) -> pure ()
-                | otherwise -> invalidMetadata "http redirect_uris are only allowed for loopback clients"
-              Nothing -> invalidMetadata "redirect_uris must include a network host component"
-          _ -> invalidMetadata "redirect_uris must use https scheme"
-
-    parseAbsolute :: Text -> Handler URI.URI
-    parseAbsolute uriText =
+    checkUri uriText =
       case URI.parseURI (T.unpack uriText) of
         Just parsed
           | not (null (URI.uriScheme parsed)) ->
-              pure parsed
-        _ -> invalidMetadata "redirect_uri is not an absolute URI"
+              ensureNoFragment parsed >> ensureScheme parsed
+        _ -> Left $ invalidMetadataError "redirect_uri is not an absolute URI"
 
-    ensureAuthority :: URI.URI -> Handler ()
+    ensureNoFragment parsed =
+      if null (URI.uriFragment parsed)
+        then Right ()
+        else Left $ invalidMetadataError "redirect_uris must not contain URI fragments"
+
+    ensureScheme parsed =
+      case URI.uriScheme parsed of
+        "https:" -> ensureAuthority parsed
+        "http:" ->
+          case URI.uriAuthority parsed of
+            Just auth
+              | isLoopbackHost (URI.uriRegName auth) -> Right ()
+              | otherwise -> Left $ invalidMetadataError "http redirect_uris are only allowed for loopback clients"
+            Nothing -> Left $ invalidMetadataError "redirect_uris must include a network host component"
+        _ -> Left $ invalidMetadataError "redirect_uris must use https scheme"
+
     ensureAuthority parsed =
       case URI.uriAuthority parsed of
-        Just _ -> pure ()
-        Nothing -> invalidMetadata "redirect_uri must include authority (host)"
+        Just _ -> Right ()
+        Nothing -> Left $ invalidMetadataError "redirect_uri must include authority (host)"
 
-    isLoopbackHost :: String -> Bool
     isLoopbackHost hostName =
       hostName == "localhost"
         || hostName == "127.0.0.1"
         || hostName == "[::1]"
 
-    invalidMetadata :: Text -> Handler a
-    invalidMetadata msg =
-      throwError $ oauthErrorResponse err400 "invalid_client_metadata" (Just msg)
+extractBearerToken :: Maybe Text -> Either ServerError Text
+extractBearerToken Nothing =
+  Left $ addBearerChallenge $ oauthErrorResponse err401 "invalid_token" (Just "Missing Authorization header")
+extractBearerToken (Just headerValue) =
+  case T.words headerValue of
+    ["Bearer", token] -> tokenOrError token
+    ["bearer", token] -> tokenOrError token
+    _ -> Left $ addBearerChallenge $ oauthErrorResponse err401 "invalid_token" (Just "Malformed Authorization header")
+  where
+    tokenOrError tok
+      | T.null tok = Left $ addBearerChallenge $ oauthErrorResponse err401 "invalid_token" (Just "Missing bearer token")
+      | otherwise = Right tok
+
+registrationNotFound :: Text -> ServerError
+registrationNotFound clientId =
+  oauthErrorResponse err404 "invalid_client" (Just ("Unknown client_id: " <> clientId))
+
+invalidMetadataError :: Text -> ServerError
+invalidMetadataError msg =
+  oauthErrorResponse err400 "invalid_client_metadata" (Just msg)
+
+addBearerChallenge :: ServerError -> ServerError
+addBearerChallenge err =
+  let headerName = "WWW-Authenticate"
+      challengeHeader = (headerName, BS8.pack "Bearer realm=\"oauth\"")
+      filteredHeaders = filter ((/= headerName) . fst) (errHeaders err)
+  in  err{errHeaders = challengeHeader : filteredHeaders}
+
+exceptEither :: Either ServerError a -> ExceptT ServerError IO a
+exceptEither = either throwE pure
+
+liftEitherIO :: Either ServerError a -> Handler a
+liftEitherIO = either throwError pure

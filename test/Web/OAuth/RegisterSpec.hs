@@ -7,13 +7,16 @@ module Web.OAuth.RegisterSpec (tests) where
 import Control.Concurrent.MVar (MVar, readMVar)
 import Data.Aeson
 import Data.Aeson.Key (toText)
+import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
+import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as LBS
 import Data.Foldable (toList)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
-import Network.HTTP.Types (hContentType, methodPost, status200, status201, status400)
+import Data.Text.Encoding qualified as TE
+import Network.HTTP.Types (HeaderName, hAuthorization, hContentType, methodDelete, methodPost, methodPut, status200, status201, status204, status400, status401, status404)
 import Network.Wai (Application, requestHeaders, requestMethod)
 import Network.Wai.Test
 import Test.Tasty
@@ -28,6 +31,10 @@ tests =
     [ appliesDefaultsForPublicClients
     , issuesSecretForConfidentialClients
     , exposesManagementCredentials
+    , managementGetReturnsClientMetadata
+    , managementRejectsInvalidToken
+    , managementUpdateAppliesChanges
+    , managementDeleteRemovesClient
     , honorsRequestedScope
     , rejectsEmptyRedirectUris
     , rejectsRelativeRedirectUris
@@ -182,6 +189,173 @@ exposesManagementCredentials = testCase "includes management token and URI in re
       Just client ->
         registered_client_registration_access_token client @?= Just managementToken
 
+managementGetReturnsClientMetadata :: TestTree
+managementGetReturnsClientMetadata = testCase "management GET returns stored metadata" $
+  withApp $ \_ app -> do
+    res <-
+      registerClient
+        app
+        ( object
+            [ "client_name" .= ("Mgmt GET" :: Text)
+            , "redirect_uris" .= ["http://localhost:4000/callback" :: Text]
+            ]
+        )
+    simpleStatus res @?= status201
+    regObj <- extractObject (simpleBody res)
+    clientId <- requireTextField "client_id" regObj
+    managementToken <- requireTextField "registration_access_token" regObj
+    getRes <-
+      runSession
+        ( srequest
+            ( SRequest
+                ( setPath defaultRequest (registrationPath clientId)
+                    ){ requestHeaders = [bearerHeader managementToken]
+                     }
+                LBS.empty
+            )
+        )
+        app
+    simpleStatus getRes @?= status200
+    getObj <- extractObject (simpleBody getRes)
+    KM.lookup "client_id" getObj @?= Just (String clientId)
+    KM.lookup "registration_access_token" getObj @?= Just (String managementToken)
+    KM.lookup "registration_client_uri" getObj @?= Just (String ("http://localhost:8080/register/" <> clientId))
+
+managementRejectsInvalidToken :: TestTree
+managementRejectsInvalidToken = testCase "management endpoints reject missing or invalid tokens" $
+  withApp $ \_ app -> do
+    res <-
+      registerClient
+        app
+        ( object
+            [ "client_name" .= ("Mgmt Invalid" :: Text)
+            , "redirect_uris" .= ["http://localhost:4000/callback" :: Text]
+            ]
+        )
+    simpleStatus res @?= status201
+    regObj <- extractObject (simpleBody res)
+    clientId <- requireTextField "client_id" regObj
+    -- Missing header
+    resMissing <-
+      runSession
+        ( srequest
+            ( SRequest
+                ( setPath defaultRequest (registrationPath clientId)
+                    ){ requestHeaders = []
+                     }
+                LBS.empty
+            )
+        )
+        app
+    simpleStatus resMissing @?= status401
+    -- Wrong token
+    resWrong <-
+      runSession
+        ( srequest
+            ( SRequest
+                ( setPath defaultRequest (registrationPath clientId)
+                    ){ requestHeaders = [bearerHeader "not-the-token"]
+                     }
+                LBS.empty
+            )
+        )
+        app
+    simpleStatus resWrong @?= status401
+
+managementUpdateAppliesChanges :: TestTree
+managementUpdateAppliesChanges = testCase "PUT replaces client metadata and persists" $
+  withApp $ \stateVar app -> do
+    res <-
+      registerClient
+        app
+        ( object
+            [ "client_name" .= ("Mgmt Update" :: Text)
+            , "redirect_uris" .= ["https://localhost/callback" :: Text]
+            , "scope" .= ("read write" :: Text)
+            ]
+        )
+    simpleStatus res @?= status201
+    regObj <- extractObject (simpleBody res)
+    clientId <- requireTextField "client_id" regObj
+    managementToken <- requireTextField "registration_access_token" regObj
+    let updatePayload =
+          object
+            [ "client_name" .= ("Mgmt Update v2" :: Text)
+            , "redirect_uris" .= ["https://localhost/updated" :: Text]
+            , "scope" .= ("profile email" :: Text)
+            , "grant_types" .= ["authorization_code", "refresh_token" :: Text]
+            , "response_types" .= ["code" :: Text]
+            , "token_endpoint_auth_method" .= ("none" :: Text)
+            ]
+    updateRes <-
+      runSession
+        ( srequest
+            ( SRequest
+                ( setPath defaultRequest (registrationPath clientId)
+                    ){ requestMethod = methodPut
+                     , requestHeaders =
+                        [ bearerHeader managementToken
+                        , (hContentType, "application/json")
+                        ]
+                     }
+                (encode updatePayload)
+            )
+        )
+        app
+    simpleStatus updateRes @?= status200
+    updateObj <- extractObject (simpleBody updateRes)
+    KM.lookup "scope" updateObj @?= Just (String "profile email")
+    KM.lookup "client_name" updateObj @?= Just (String "Mgmt Update v2")
+    st <- readMVar stateVar
+    case Map.lookup clientId (registered_clients st) of
+      Nothing -> assertFailure "Client missing after update"
+      Just client -> do
+        registered_client_scope client @?= "profile email"
+        registered_client_redirect_uris client @?= ["https://localhost/updated"]
+
+managementDeleteRemovesClient :: TestTree
+managementDeleteRemovesClient = testCase "DELETE removes client and subsequent GET returns 404" $
+  withApp $ \stateVar app -> do
+    res <-
+      registerClient
+        app
+        ( object
+            [ "client_name" .= ("Mgmt Delete" :: Text)
+            , "redirect_uris" .= ["http://localhost:4000/callback" :: Text]
+            ]
+        )
+    simpleStatus res @?= status201
+    regObj <- extractObject (simpleBody res)
+    clientId <- requireTextField "client_id" regObj
+    managementToken <- requireTextField "registration_access_token" regObj
+    deleteRes <-
+      runSession
+        ( srequest
+            ( SRequest
+                ( setPath defaultRequest (registrationPath clientId)
+                    ){ requestMethod = methodDelete
+                     , requestHeaders = [bearerHeader managementToken]
+                     }
+                LBS.empty
+            )
+        )
+        app
+    simpleStatus deleteRes @?= status204
+    st <- readMVar stateVar
+    Map.lookup clientId (registered_clients st) @?= Nothing
+    afterDelete <-
+      runSession
+        ( srequest
+            ( SRequest
+                ( setPath defaultRequest (registrationPath clientId)
+                    ){ requestHeaders = [bearerHeader managementToken]
+                     }
+                LBS.empty
+            )
+        )
+        app
+    simpleStatus afterDelete @?= status404
+
 honorsRequestedScope :: TestTree
 honorsRequestedScope = testCase "persists provided scope field" $
   withApp $ \stateVar app -> do
@@ -239,6 +413,18 @@ rejectsEmptyRedirectUris = testCase "rejects registrations without redirect URIs
     simpleStatus res @?= status400
     err <- decodeRegistrationError (simpleBody res)
     Web.OAuth.Types.error err @?= "invalid_client_metadata"
+
+registrationPath :: Text -> BS8.ByteString
+registrationPath clientId = BS8.concat ["/register/", TE.encodeUtf8 clientId]
+
+bearerHeader :: Text -> (HeaderName, BS8.ByteString)
+bearerHeader token = (hAuthorization, TE.encodeUtf8 ("Bearer " <> token))
+
+requireTextField :: Text -> Object -> IO Text
+requireTextField key obj =
+  case KM.lookup (Key.fromText key) obj of
+    Just (String val) -> pure val
+    _ -> assertFailure ("Missing text field: " <> T.unpack key)
 
 rejectsUnsupportedAuthMethod :: TestTree
 rejectsUnsupportedAuthMethod = testCase "rejects token auth methods the server cannot fulfill" $
