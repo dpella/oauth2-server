@@ -117,6 +117,7 @@ rejectsMissingVerifier = testCase "enforces PKCE code_verifier when challenge st
         )
     simpleStatus res @?= status400
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
+    assertNoStoreHeadersResponse res
     errResp <- decodeOAuthError (simpleBody res)
     OAuthTypes.error errResp @?= "invalid_request"
 
@@ -140,6 +141,7 @@ rejectsInvalidVerifier = testCase "rejects mismatched code_verifier" $
         )
     simpleStatus res @?= status400
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
+    assertNoStoreHeadersResponse res
     errResp <- decodeOAuthError (simpleBody res)
     OAuthTypes.error errResp @?= "invalid_grant"
     OAuthTypes.error_description errResp @?= Just "Invalid code verifier"
@@ -164,6 +166,7 @@ rejectsExpiredAuthCode = testCase "rejects expired authorization codes" $
         )
     simpleStatus res @?= status400
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
+    assertNoStoreHeadersResponse res
     errResp <- decodeOAuthError (simpleBody res)
     OAuthTypes.error errResp @?= "invalid_grant"
     OAuthTypes.error_description errResp @?= Just "Authorization code expired"
@@ -188,6 +191,7 @@ confidentialClientsRequireSecret = testCase "confidential clients must provide c
         )
     simpleStatus res @?= status401
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
+    assertNoStoreHeadersResponse res
     errResp <- decodeOAuthError (simpleBody res)
     OAuthTypes.error errResp @?= "invalid_client"
     st <- readMVar stateVar
@@ -208,6 +212,7 @@ rejectsUnknownRefreshToken = testCase "rejects refresh_token grant when token mi
         )
     simpleStatus res @?= status400
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
+    assertNoStoreHeadersResponse res
     errResp <- decodeOAuthError (simpleBody res)
     OAuthTypes.error errResp @?= "invalid_grant"
 
@@ -234,6 +239,7 @@ rejectsRefreshScopeEscalation = testCase "rejects refresh token with scope outsi
         )
     simpleStatus res @?= status400
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
+    assertNoStoreHeadersResponse res
     errResp <- decodeOAuthError (simpleBody res)
     OAuthTypes.error errResp @?= "invalid_scope"
 
@@ -257,6 +263,7 @@ authorizationCodeSingleUseConcurrent = testCase "authorization codes cannot be r
     statuses @?= [status200, status400]
     let (failureRes, successRes) = if simpleStatus resA == status400 then (resA, resB) else (resB, resA)
     lookup hContentType (simpleHeaders failureRes) @?= Just "application/json; charset=utf-8"
+    assertNoStoreHeadersResponse failureRes
     errResp <- decodeOAuthError (simpleBody failureRes)
     OAuthTypes.error errResp @?= "invalid_grant"
     simpleStatus successRes @?= status200
@@ -287,6 +294,7 @@ refreshTokenSingleUseConcurrent = testCase "refresh tokens rotate under concurre
     statuses @?= [status200, status400]
     let (failureRes, successRes) = if simpleStatus resA == status400 then (resA, resB) else (resB, resA)
     lookup hContentType (simpleHeaders failureRes) @?= Just "application/json; charset=utf-8"
+    assertNoStoreHeadersResponse failureRes
     errResp <- decodeOAuthError (simpleBody failureRes)
     OAuthTypes.error errResp @?= "invalid_grant"
     simpleStatus successRes @?= status200

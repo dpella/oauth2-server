@@ -14,6 +14,9 @@
 - Authorization code redemption inside the token endpoint now executes under a single state lock, preventing concurrent exchanges from reusing the same code.
 - Refresh token rotation is now atomic, stopping concurrent refresh requests from returning multiple valid tokens for the same handle.
 ## Fixed
+- Authorization login and retry flows now generate relative callback URLs, so mounting the server under a sub-path (e.g. `/oauth`) no longer breaks form submissions or error redirects.
+- Token endpoint error responses also emit `Cache-Control: no-store` and `Pragma: no-cache`, keeping sensitive failures out of intermediary caches.
+- Dynamic client registration accepts any `127.0.0.0/8` loopback redirect host, restoring compatibility with tooling that binds to alternate loopback addresses.
 - Dynamic client registration omits `client_secret` and `client_secret_expires_at` when no secret is issued, matching RFC 7591 expectations.
 - Registration now rejects unsupported `token_endpoint_auth_method` values instead of provisioning unusable clients.
 - Token endpoint `invalid_client` responses include a `WWW-Authenticate` challenge so OAuth clients can discover the required authentication scheme.

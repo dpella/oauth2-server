@@ -39,6 +39,7 @@ tests =
     , rejectsEmptyRedirectUris
     , rejectsRelativeRedirectUris
     , rejectsInsecureRedirectUris
+    , acceptsExtendedLoopbackRedirects
     , rejectsUnsupportedAuthMethod
     ]
 
@@ -471,3 +472,16 @@ rejectsInsecureRedirectUris = testCase "rejects non-loopback http redirect URIs"
     simpleStatus res @?= status400
     err <- decodeRegistrationError (simpleBody res)
     Web.OAuth.Types.error err @?= "invalid_client_metadata"
+
+acceptsExtendedLoopbackRedirects :: TestTree
+acceptsExtendedLoopbackRedirects = testCase "accepts any 127.0.0.0/8 redirect host" $
+  withApp $ \_ app -> do
+    res <-
+      registerClient
+        app
+        ( object
+            [ "client_name" .= ("Loopback" :: Text)
+            , "redirect_uris" .= ["http://127.10.20.30/callback" :: Text]
+            ]
+        )
+    simpleStatus res @?= status201

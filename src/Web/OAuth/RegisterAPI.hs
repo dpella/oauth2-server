@@ -35,6 +35,7 @@ import GHC.Generics
 import Network.URI qualified as URI
 import Web.OAuth.Types
 import Servant
+import Text.Read (readMaybe)
 
 -- | Servant API type for the OAuth dynamic client registration endpoint.
 --
@@ -386,7 +387,7 @@ validateRedirectUris uris
         "http:" ->
           case URI.uriAuthority parsed of
             Just auth
-              | isLoopbackHost (URI.uriRegName auth) -> Right ()
+              | isLoopbackHost (T.pack (URI.uriRegName auth)) -> Right ()
               | otherwise -> Left $ invalidMetadataError "http redirect_uris are only allowed for loopback clients"
             Nothing -> Left $ invalidMetadataError "redirect_uris must include a network host component"
         _ -> Left $ invalidMetadataError "redirect_uris must use https scheme"
@@ -398,8 +399,16 @@ validateRedirectUris uris
 
     isLoopbackHost hostName =
       hostName == "localhost"
-        || hostName == "127.0.0.1"
         || hostName == "[::1]"
+        || hostName == "::1"
+        || isIPv4Loopback hostName
+
+    isIPv4Loopback host =
+      case traverse (readMaybe . T.unpack) (T.splitOn "." host) of
+        Just [a, b, c, d]
+          | a == (127 :: Int)
+          , all (\o -> o >= 0 && o <= 255) [b, c, d] -> True
+        _ -> False
 
 extractBearerToken :: Maybe Text -> Either ServerError Text
 extractBearerToken Nothing =

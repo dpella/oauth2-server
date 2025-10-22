@@ -161,7 +161,7 @@ handleAuthorize
             Just "invalid_password" -> H.div H.! A.class_ "error-message" $ "Invalid username or password"
             Just err -> H.div H.! A.class_ "error-message" $ H.toHtml err
             Nothing -> mempty
-          H.form H.! A.method "post" H.! A.action "/authorize/callback" $ do
+          H.form H.! A.method "post" H.! A.action "authorize/callback" $ do
             H.input H.! A.type_ "hidden" H.! A.name "client_id" H.! A.value (H.toValue clientId)
             H.input H.! A.type_ "hidden" H.! A.name "redirect_uri" H.! A.value (H.toValue redirectUri)
             H.input H.! A.type_ "hidden" H.! A.name "scope" H.! A.value (H.toValue scope)

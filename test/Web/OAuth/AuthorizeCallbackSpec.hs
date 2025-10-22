@@ -107,7 +107,7 @@ invalidCredentialsRedirectBack = testCase "redirects back to authorize with erro
       Nothing -> assertFailure "Location header missing"
       Just loc -> do
         let locText = TE.decodeUtf8 loc
-        assertBool "redirected to authorize" ("/authorize" `T.isPrefixOf` locText)
+        assertBool "redirected to authorize" ("authorize" `T.isPrefixOf` locText)
         assertBool "state preserved" ("state=orig-state" `T.isInfixOf` locText)
         assertBool "error flag propagated" ("error=invalid_password" `T.isInfixOf` locText)
 

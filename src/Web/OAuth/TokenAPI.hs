@@ -142,7 +142,7 @@ handleTokenRequest state_var ctxt TokenRequest{..} = do
       modifyMVar state_var $ \state ->
         processRequest jwtCfg state
   case result of
-    Left err -> throwError err
+    Left err -> throwError (attachNoStoreError err)
     Right resp -> pure (attachNoStoreHeaders resp)
   where
     attachNoStoreHeaders :: TokenResponse -> TokenResponseHeaders
@@ -150,6 +150,16 @@ handleTokenRequest state_var ctxt TokenRequest{..} = do
       let withPragma :: Headers '[Header "Pragma" Text] TokenResponse
           withPragma = addHeader ("no-cache" :: Text) resp
       in  addHeader ("no-store" :: Text) withPragma
+
+    attachNoStoreError :: ServerError -> ServerError
+    attachNoStoreError err =
+      let filtered =
+            filter
+              ( \ (name, _) ->
+                  name /= "Cache-Control" && name /= "Pragma"
+              )
+              (errHeaders err)
+      in  err{errHeaders = ("Cache-Control", "no-store") : ("Pragma", "no-cache") : filtered}
 
     processRequest
       :: JWTSettings
