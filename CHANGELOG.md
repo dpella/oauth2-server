@@ -21,6 +21,7 @@
 - Registration now rejects unsupported `token_endpoint_auth_method` values instead of provisioning unusable clients.
 - Token endpoint `invalid_client` responses include a `WWW-Authenticate` challenge so OAuth clients can discover the required authentication scheme.
 - Authorization endpoint now emits OAuth error responses via 303 redirects to the validated `redirect_uri`, including the original `state` when present, so clients receive spec-compliant failure notifications.
+- Authorization callback now returns a relative `Location: ../authorize` on credential failures, guaranteeing the retry redirect lands on the authorize endpoint even when the server is mounted under a sub-path.
 - Authorization callback now performs RFC-compliant 303 redirects with correctly constructed `Location` headers instead of relying on HTML meta refresh, preserving existing redirect URI queries and fragments.
 - Discovery metadata now preserves the configured base URL, appending the OAuth server port only when absent and constructing endpoint paths without producing malformed `host:port:port` strings.
 - Token issuance no longer crashes the server on JWT signing failures; such errors now surface as OAuth `server_error` responses (HTTP 500).

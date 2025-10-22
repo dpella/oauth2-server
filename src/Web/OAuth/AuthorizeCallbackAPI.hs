@@ -148,7 +148,7 @@ handleAuthorizeCallback state_var ctxt LoginForm{..} = do
               (("code", auth_code) : maybeParam "state" login_state)
       redirect303 redirect_url
     _ -> do
-      let base = "authorize"
+      let base = "../authorize"
           params =
             [ ("response_type", "code")
             , ("client_id", login_client_id)
