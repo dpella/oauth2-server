@@ -26,7 +26,6 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Data.Aeson
 import Data.ByteString.Char8 qualified as BS8
-import Data.List (foldl')
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)

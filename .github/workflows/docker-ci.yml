@@ -53,7 +53,7 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ghcr.io/dpella/oauth
+        images: ghcr.io/dpella/oauth-server
         tags: |
           type=ref,event=branch,branch=main
           type=ref,event=tag

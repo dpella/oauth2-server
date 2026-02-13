@@ -1,3 +1,3 @@
 #! /usr/bin/bash 
 
-cabal test test-oauth
+cabal test test-oauth-server

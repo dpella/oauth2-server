@@ -1,6 +1,6 @@
-# DPella OAuth — OAuth 2.1 Authorization Server for Servant
+# DPella OAuth Server — OAuth 2.1 Authorization Server for Servant
 
-DPella OAuth is a small, composable OAuth 2.1 authorization server for Haskell/Servant. It implements the core endpoints for authorization code with PKCE, dynamic client registration, token issuance and refresh, and discovery metadata. It integrates with `servant-auth-server` to mint JWT access tokens and lets you plug in your own username/password authentication via a simple typeclass.
+DPella OAuth Server is a small, composable OAuth 2.1 authorization server for Haskell/Servant. It implements the core endpoints for authorization code with PKCE, dynamic client registration, token issuance and refresh, and discovery metadata. It integrates with `servant-auth-server` to mint JWT access tokens and lets you plug in your own username/password authentication via a simple typeclass.
 
 This library is designed to be embedded inside your existing Servant application, mounting the OAuth routes alongside your APIs.
 
@@ -38,10 +38,10 @@ build-depends:
   , text
   , aeson
   , containers
-  , oauth  -- this package
+  , oauth-server  -- this package
 ```
 
-This project targets GHC 9.6 (see `cabal.project`).
+This project targets GHC 9.12 (see `cabal.project`).
 
 ## Quick Start
 

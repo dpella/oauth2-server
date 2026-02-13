@@ -72,7 +72,9 @@ successfulLoginIssuesAuthCode = testCase "stores auth code and redirects with st
     st <- readMVar stateVar
     let codes = Map.elems (auth_codes st)
     assertBool "auth code stored" (not (null codes))
-    let stored = head codes
+    stored <- case codes of
+          (x:_) -> pure x
+          []    -> assertFailure "no auth codes stored"
     auth_code_client_id stored @?= "client-1"
     auth_code_scope stored @?= "read"
     auth_code_challenge stored @?= Just challenge
