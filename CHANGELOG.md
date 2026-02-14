@@ -1,6 +1,6 @@
 # Changelog
 
-# Unreleased
+# 0.2.1.0
 ## Added
 - Dynamic client management endpoint at `/register/{client_id}` supporting GET/PUT/DELETE for registrations authenticated via the issued `registration_access_token`.
 
