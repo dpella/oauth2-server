@@ -303,7 +303,7 @@ authorizeManagement RegisteredClient{registered_client_registration_access_token
   case extractBearerToken mHeader of
     Left err -> Left err
     Right provided ->
-      if provided == expectedToken
+      if constTimeEq provided expectedToken
         then Right expectedToken
         else Left $ addBearerChallenge $ oauthErrorResponse err401 "invalid_token" (Just "Invalid management access token")
 

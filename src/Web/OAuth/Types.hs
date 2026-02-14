@@ -37,6 +37,7 @@ import Servant (Context, HasContextEntry)
 import Servant.Auth.Server (AuthResult (..))
 import Servant.Server (ServerError (..))
 import Crypto.Random (getRandomBytes)
+import Data.ByteArray qualified as BA
 import Data.ByteString.Base64.URL qualified as B64URL
 
 -- | Authorization code issued after successful authentication.
@@ -256,6 +257,13 @@ appendPathSegment base segment =
           else T.dropWhileEnd (== '/') baseWithoutFragment
       combined = baseStripped <> segment
   in  combined <> fragmentPart
+
+-- | Constant-time equality comparison for Text values.
+--
+-- Prevents timing side-channel attacks when comparing secrets,
+-- tokens, or other security-sensitive strings.
+constTimeEq :: Text -> Text -> Bool
+constTimeEq a b = BA.constEq (TE.encodeUtf8 a) (TE.encodeUtf8 b)
 
 -- | Class for verifying user credentials from username and password
 class FormAuth usr where

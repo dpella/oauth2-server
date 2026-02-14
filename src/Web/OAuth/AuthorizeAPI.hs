@@ -226,4 +226,4 @@ validateScope :: Text -> Text -> Bool
 validateScope requested allowed =
   let requested_scopes = T.words requested
       allowed_scopes = T.words allowed
-  in  all (`elem` allowed_scopes) requested_scopes
+  in  not (null requested_scopes) && all (`elem` allowed_scopes) requested_scopes

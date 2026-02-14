@@ -20,6 +20,10 @@ homepage:          https://github.com/DPella/oauth-server
 bug-reports:       https://github.com/DPella/oauth-server/issues
 category:          Web, Security
 
+source-repository head
+  type:     git
+  location: https://github.com/DPella/oauth-server.git
+
 library
   default-language:
     Haskell2010

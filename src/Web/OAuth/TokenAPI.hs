@@ -180,7 +180,7 @@ handleTokenRequest state_var ctxt TokenRequest{..} = do
       | registered_client_token_endpoint_auth_method == "client_secret_post" =
           case (client_secret, registered_client_secret) of
             (Just provided, Just expected)
-              | provided == expected -> pure (Right ())
+              | constTimeEq provided expected -> pure (Right ())
               | otherwise -> pure (Left $ tokenAuthFailure "invalid_client" "Invalid client secret")
             _ -> pure (Left $ tokenAuthFailure "invalid_client" "Missing client secret")
       | registered_client_token_endpoint_auth_method == "none" =

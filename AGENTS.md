@@ -3,9 +3,9 @@
 This repository implements an OAuth 2.1 authorization server as a Haskell library using Servant. Follow these concise guidelines to contribute effectively.
 
 ## Project Structure & Module Organization
-- Source: `src/` (modules under `OAuth.*`, e.g., `src/OAuth/TokenAPI.hs`).
-- Types and state: `src/OAuth/Types.hs`.
-- Tests: `tests/` (Tasty: unit/property and end-to-end; e.g., `tests/OAuth/FlowSpec.hs`, `tests/Main.hs`).
+- Source: `src/` (modules under `Web.OAuth.*`, e.g., `src/Web/OAuth/TokenAPI.hs`).
+- Types and state: `src/Web/OAuth/Types.hs`.
+- Tests: `test/` (Tasty: unit/property and end-to-end; e.g., `test/Web/OAuth/FlowSpec.hs`, `test/Main.hs`).
 - Build files: `oauth-server.cabal`, `cabal.project`.
 - Expose or list new modules in `oauth-server.cabal` (`exposed-modules` or `other-modules`).
 
@@ -18,13 +18,13 @@ This repository implements an OAuth 2.1 authorization server as a Haskell librar
 ## Coding Style & Naming Conventions
 - Haskell2010 with project defaults; prefer existing extensions already enabled in `oauth-server.cabal`.
 - Indentation: 2 spaces, no tabs; keep lines ≤ 100 columns.
-- Modules: `OAuth.*` (e.g., `OAuth.MetadataAPI`). One top-level export list per module.
+- Modules: `Web.OAuth.*` (e.g., `Web.OAuth.MetadataAPI`). One top-level export list per module.
 - Names: Types in `TitleCase`; functions in `camelCase`; record fields follow existing `snake_case` pattern (e.g., `registered_client_grant_types`).
 - Imports: qualified where helpful; group stdlib/external/local; avoid unused imports.
 
 ## Testing Guidelines
 - Frameworks: `tasty`, `tasty-hunit`, `tasty-quickcheck`.
-- Place tests under `tests/OAuth/*Spec.hs`; add to `other-modules` in `oauth-server.cabal` if needed.
+- Place tests under `test/Web/OAuth/*Spec.hs`; add to `other-modules` in `oauth-server.cabal` if needed.
 - Aim to cover new endpoints/branches; prefer property tests for token/PKCE helpers.
 - Run `cabal test` before submitting; keep tests deterministic and hermetic (no network).
 
