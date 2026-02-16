@@ -5,14 +5,19 @@ module Web.OAuth2.TokenSpec (tests) where
 
 import Control.Concurrent.Async (concurrently)
 import Control.Concurrent.MVar (MVar, readMVar)
+import Crypto.Hash (SHA256 (..), hashWith)
 import Data.Aeson (Value (..), eitherDecode)
 import Data.Aeson.KeyMap qualified as KM
+import Data.ByteArray qualified as BA
+import Data.ByteString qualified as BS
+import Data.ByteString.Base64.URL qualified as B64URL
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as LBS
 import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, isNothing)
 import Data.Text (Text)
+import Data.Text.Encoding qualified as TE
 import Data.Time.Clock
 import Network.HTTP.Types (hContentType, methodPost, status200, status400, status401)
 import Network.Wai (Application, requestHeaders, requestMethod)
@@ -45,6 +50,11 @@ tokenEndpointIntegrationTests =
     , rejectsRefreshScopeEscalation
     , authorizationCodeSingleUseConcurrent
     , refreshTokenSingleUseConcurrent
+    , rejectsDisallowedGrantType
+    , rejectsRefreshTokenClientMismatch
+    , pkceS256AcceptsValidVerifier
+    , pkceDefaultsToPlainWhenMethodOmitted
+    , rejectsUnsupportedPkceMethod
     ]
 
 handlerLevelTests :: TestTree
@@ -406,3 +416,125 @@ assertNoStoreHeadersResponse :: SResponse -> Assertion
 assertNoStoreHeadersResponse res = do
   lookup "Cache-Control" (simpleHeaders res) @?= Just "no-store"
   lookup "Pragma" (simpleHeaders res) @?= Just "no-cache"
+
+rejectsDisallowedGrantType :: TestTree
+rejectsDisallowedGrantType = testCase "rejects grant_type not in client's allowed grants" $
+  withFreshApp $ \stateVar app -> do
+    let client = mkRegisteredClient "authonly" ["http://localhost:4000/cb"] ["authorization_code"] ["code"] "read" "none" Nothing
+    addRegisteredClientToState stateVar client
+    res <-
+      postToken
+        app
+        ( encodeForm
+            [ ("grant_type", "refresh_token")
+            , ("refresh_token", "rt-any")
+            , ("client_id", "authonly")
+            ]
+        )
+    simpleStatus res @?= status400
+    assertNoStoreHeadersResponse res
+    errResp <- decodeOAuthError (simpleBody res)
+    OAuthTypes.error errResp @?= "unauthorized_client"
+
+rejectsRefreshTokenClientMismatch :: TestTree
+rejectsRefreshTokenClientMismatch = testCase "rejects refresh token issued to a different client" $
+  withFreshApp $ \stateVar app -> do
+    addRegisteredClientToState stateVar (mkPublicClient "client-a" ["http://localhost:4000/cb"] "read")
+    addRegisteredClientToState stateVar (mkPublicClient "client-b" ["http://localhost:4000/cb"] "read")
+    let refreshTok =
+          RefreshToken
+            { refresh_token_value = "rt-stolen"
+            , refresh_token_client_id = "client-a"
+            , refresh_token_user = testUser
+            , refresh_token_scope = "read"
+            }
+    addRefreshTokenToState stateVar refreshTok
+    res <-
+      postToken
+        app
+        ( encodeForm
+            [ ("grant_type", "refresh_token")
+            , ("refresh_token", "rt-stolen")
+            , ("client_id", "client-b")
+            ]
+        )
+    simpleStatus res @?= status400
+    assertNoStoreHeadersResponse res
+    errResp <- decodeOAuthError (simpleBody res)
+    OAuthTypes.error errResp @?= "invalid_grant"
+    OAuthTypes.error_description errResp @?= Just "Client ID mismatch"
+
+-- | Compute a PKCE S256 challenge from a verifier.
+s256Challenge :: Text -> Text
+s256Challenge verifier =
+  let hash = hashWith SHA256 (TE.encodeUtf8 verifier)
+      hashBytes = BS.pack (BA.unpack hash)
+  in  TE.decodeUtf8 (B64URL.encodeUnpadded hashBytes)
+
+pkceS256AcceptsValidVerifier :: TestTree
+pkceS256AcceptsValidVerifier = testCase "accepts valid S256 PKCE code_verifier" $
+  withFreshApp $ \stateVar app -> do
+    addRegisteredClientToState stateVar (mkPublicClient "pub-s256" ["http://localhost:4000/cb"] "read")
+    now <- getCurrentTime
+    let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        challenge = s256Challenge verifier
+        authCode = mkAuthCodeEntry "code-s256" "pub-s256" "http://localhost:4000/cb" "read" (addUTCTime 600 now) (Just challenge) (Just "S256")
+    addAuthCodeToState stateVar authCode
+    res <-
+      postToken
+        app
+        ( encodeForm
+            [ ("grant_type", "authorization_code")
+            , ("code", "code-s256")
+            , ("redirect_uri", "http://localhost:4000/cb")
+            , ("client_id", "pub-s256")
+            , ("code_verifier", verifier)
+            ]
+        )
+    simpleStatus res @?= status200
+    assertNoStoreHeadersResponse res
+
+pkceDefaultsToPlainWhenMethodOmitted :: TestTree
+pkceDefaultsToPlainWhenMethodOmitted = testCase "PKCE defaults to plain verification when method is omitted" $
+  withFreshApp $ \stateVar app -> do
+    addRegisteredClientToState stateVar (mkPublicClient "pub-nomethod" ["http://localhost:4000/cb"] "read")
+    now <- getCurrentTime
+    let verifier = "my-plain-verifier"
+        authCode = mkAuthCodeEntry "code-nomethod" "pub-nomethod" "http://localhost:4000/cb" "read" (addUTCTime 600 now) (Just verifier) Nothing
+    addAuthCodeToState stateVar authCode
+    res <-
+      postToken
+        app
+        ( encodeForm
+            [ ("grant_type", "authorization_code")
+            , ("code", "code-nomethod")
+            , ("redirect_uri", "http://localhost:4000/cb")
+            , ("client_id", "pub-nomethod")
+            , ("code_verifier", verifier)
+            ]
+        )
+    simpleStatus res @?= status200
+    assertNoStoreHeadersResponse res
+
+rejectsUnsupportedPkceMethod :: TestTree
+rejectsUnsupportedPkceMethod = testCase "rejects unsupported PKCE code_challenge_method" $
+  withFreshApp $ \stateVar app -> do
+    addRegisteredClientToState stateVar (mkPublicClient "pub-badmethod" ["http://localhost:4000/cb"] "read")
+    now <- getCurrentTime
+    let authCode = mkAuthCodeEntry "code-badmethod" "pub-badmethod" "http://localhost:4000/cb" "read" (addUTCTime 600 now) (Just "challenge") (Just "RS256")
+    addAuthCodeToState stateVar authCode
+    res <-
+      postToken
+        app
+        ( encodeForm
+            [ ("grant_type", "authorization_code")
+            , ("code", "code-badmethod")
+            , ("redirect_uri", "http://localhost:4000/cb")
+            , ("client_id", "pub-badmethod")
+            , ("code_verifier", "challenge")
+            ]
+        )
+    simpleStatus res @?= status400
+    assertNoStoreHeadersResponse res
+    errResp <- decodeOAuthError (simpleBody res)
+    OAuthTypes.error errResp @?= "invalid_grant"

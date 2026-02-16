@@ -63,7 +63,7 @@ import Network.Wai (Application)
 import Network.Wai.Handler.Warp (run)
 import Servant
 import Servant.Auth.Server
-import Web.OAuth2 (OAuthAPI, oAuthAPI)
+import Web.OAuth2 (OAuthAPI, oAuthAPI, defaultLoginFormRenderer)
 import Web.OAuth2.Types
 
 -- Your application user type and JWT instances
@@ -88,7 +88,7 @@ mkApp = do
 
   -- In-memory refresh-token persistence (swap for your DB if needed)
   rtp <- mkDefaultRefreshTokenPersistence
-  st  <- newMVar (initOAuthState @User "http://localhost" 8080 rtp)
+  st  <- newMVar (initOAuthState @User "http://localhost" 8080 rtp defaultLoginFormRenderer)
 
   pure $ serveWithContext (Proxy :: Proxy OAuthAPI) ctx (oAuthAPI st ctx)
 
@@ -99,8 +99,9 @@ main = mkApp >>= run 8080
 Notes:
 
 - `initOAuthState` sets the base URL and port used in discovery metadata.
+- Pass `defaultLoginFormRenderer` for the built-in login page, or supply your own `LoginFormParams -> Html` function to customise the look-and-feel.
 - For production, provide a durable `RefreshTokenPersistence` (e.g. database) by implementing `persistRefreshToken`, `deleteRefreshToken`, and `lookupRefreshToken`.
-- The login page references `/static/logo.png` if present; it’s optional.
+- The default login page references `/static/logo.png` if present; it's optional.
 
 ## Short Tutorial
 
@@ -167,9 +168,11 @@ curl -s http://localhost:8080/.well-known/oauth-authorization-server | jq
 - `FormAuth usr` — plug‑in credential verification for your user type:
   - associated type `FormAuthSettings usr`
   - `runFormAuth :: Context ctxt -> Text -> Text -> IO (AuthResult usr)`
-- `OAuthState usr` — holds authorization codes, client registry, and refresh‑token persistence
+- `OAuthState usr` — holds authorization codes, client registry, refresh‑token persistence, and login form renderer
 - `mkDefaultRefreshTokenPersistence` — in‑memory `RefreshToken` storage (replace in production)
-- `initOAuthState` — construct initial state with base URL and port
+- `initOAuthState` — construct initial state with base URL, port, and login form renderer
+- `defaultLoginFormRenderer` — built-in login page; pass to `initOAuthState` or replace with your own
+- `LoginFormParams` — parameters available to a custom login form renderer
 
 See also:
 

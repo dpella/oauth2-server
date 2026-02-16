@@ -4,7 +4,7 @@
 
 module Web.OAuth2.AuthorizeSpec (tests) where
 
-import Control.Concurrent.MVar (MVar)
+import Control.Concurrent.MVar (MVar, newMVar)
 import Data.Aeson (eitherDecode)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
@@ -14,8 +14,12 @@ import Network.HTTP.Types (hContentType, status200, status303, status400, status
 import Network.HTTP.Types.URI (renderQuery)
 import Network.Wai (Application)
 import Network.Wai.Test
+import Servant (Proxy (..), serveWithContext)
 import Test.Tasty
 import Test.Tasty.HUnit
+import Text.Blaze.Html5 qualified as H
+import Web.OAuth2 (OAuthAPI, oAuthAPI)
+import Web.OAuth2.Internal (validateScope)
 import Web.OAuth2.TestUtils
 import Web.OAuth2.Types hiding (error)
 import Web.OAuth2.Types qualified as OAuthTypes
@@ -31,6 +35,9 @@ tests =
     , echoesErrorMessage
     , omitsStateHiddenFieldWhenAbsent
     , missingParametersReturnInvalidRequest
+    , rejectsUnsupportedResponseType
+    , usesCustomLoginFormRenderer
+    , validateScopeTests
     ]
 
 withApp :: (MVar (OAuthState TestUser) -> Application -> IO a) -> IO a
@@ -183,3 +190,71 @@ echoesErrorMessage = testCase "renders login form with error message when provid
     simpleStatus res @?= status200
     let bodyTxt = LBS.toStrict (simpleBody res)
     assertBool "error message rendered" ("Invalid username or password" `BS.isInfixOf` bodyTxt)
+
+rejectsUnsupportedResponseType :: TestTree
+rejectsUnsupportedResponseType = testCase "rejects response_type=token with unsupported_response_type" $
+  withApp $ \stateVar app -> do
+    addRegisteredClientToState stateVar (mkPublicClient "cid-6" ["http://localhost:4000/cb"] "read")
+    let query =
+          [ ("response_type", Just "token")
+          , ("client_id", Just "cid-6")
+          , ("redirect_uri", Just "http://localhost:4000/cb")
+          , ("scope", Just "read")
+          ]
+        path = BS.concat ["/authorize", renderQuery True query]
+    res <-
+      runSession
+        (srequest (SRequest (setPath defaultRequest path) LBS.empty))
+        app
+    simpleStatus res @?= status400
+    errResp <- reconstructError (simpleBody res)
+    OAuthTypes.error errResp @?= "unsupported_response_type"
+
+usesCustomLoginFormRenderer :: TestTree
+usesCustomLoginFormRenderer = testCase "authorize endpoint invokes custom login_form_renderer" $ do
+  let customRenderer _params = H.unsafeByteString "CUSTOM_FORM"
+  persistence <- mkDefaultRefreshTokenPersistence
+  stateVar <- newMVar (initOAuthState @TestUser "http://localhost:8080" 8080 persistence customRenderer)
+  addRegisteredClientToState stateVar (mkPublicClient "cid-custom" ["http://localhost:4000/cb"] "read")
+  ctx <- createTestContext
+  let app = serveWithContext (Proxy :: Proxy OAuthAPI) ctx (oAuthAPI stateVar ctx)
+      query =
+        [ ("response_type", Just "code")
+        , ("client_id", Just "cid-custom")
+        , ("redirect_uri", Just "http://localhost:4000/cb")
+        , ("scope", Just "read")
+        , ("state", Just "xyz")
+        , ("code_challenge", Just "test-challenge")
+        , ("code_challenge_method", Just "S256")
+        ]
+      path = BS.concat ["/authorize", renderQuery True query]
+  res <-
+    runSession
+      (srequest (SRequest (setPath defaultRequest path) LBS.empty))
+      app
+  simpleStatus res @?= status200
+  let bodyTxt = LBS.toStrict (simpleBody res)
+  assertBool "custom renderer output present" ("CUSTOM_FORM" `BS.isInfixOf` bodyTxt)
+  assertBool "default form not rendered" (not ("Sign In" `BS.isInfixOf` bodyTxt))
+
+validateScopeTests :: TestTree
+validateScopeTests =
+  testGroup
+    "validateScope"
+    [ testCase "single scope within allowed" $
+        validateScope "read" "read write" @?= True
+    , testCase "multiple scopes within allowed" $
+        validateScope "read write" "read write admin" @?= True
+    , testCase "exact match" $
+        validateScope "read write" "read write" @?= True
+    , testCase "rejects scope not in allowed list" $
+        validateScope "admin" "read write" @?= False
+    , testCase "rejects partially invalid scope" $
+        validateScope "read admin" "read write" @?= False
+    , testCase "rejects empty requested scope" $
+        validateScope "" "read write" @?= False
+    , testCase "duplicate requested scopes still valid" $
+        validateScope "read read" "read write" @?= True
+    , testCase "extra whitespace handled" $
+        validateScope "read  write" "read write" @?= True
+    ]

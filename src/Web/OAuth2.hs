@@ -12,7 +12,7 @@
 -- This module combines all OAuth endpoints into a single API type
 -- and provides the server implementation that routes requests to
 -- the appropriate handlers.
-module Web.OAuth2 (OAuthAPI, oAuthAPI, mkDefaultRefreshTokenPersistence) where
+module Web.OAuth2 (OAuthAPI, oAuthAPI, mkDefaultRefreshTokenPersistence, defaultLoginFormRenderer) where
 
 import Control.Concurrent.MVar (MVar)
 import Web.OAuth2.AuthorizeAPI

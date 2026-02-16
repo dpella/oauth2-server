@@ -164,6 +164,7 @@ mkState persistence clients codes =
           Map.fromList $ fmap (\c -> (registered_client_id c, c)) clients
       , oauth_url = "https://auth.example.com"
       , oauth_port = 443
+      , login_form_renderer = defaultLoginFormRenderer
       }
 
 mkJWTSettings :: IO JWTSettings
@@ -187,7 +188,7 @@ encodeForm fields =
 emptyOAuthState :: IO (MVar (OAuthState TestUser))
 emptyOAuthState = do
   persistence <- mkDefaultRefreshTokenPersistence
-  newMVar (initOAuthState @TestUser "http://localhost:8080" 8080 persistence)
+  newMVar (initOAuthState @TestUser "http://localhost:8080" 8080 persistence defaultLoginFormRenderer)
 
 createTestContext :: IO (Context '[JWTSettings, TestAuthSettings])
 createTestContext = do

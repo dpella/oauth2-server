@@ -35,6 +35,7 @@ import Network.HTTP.Types (hContentType)
 import Network.URI
 import Servant (Context, HasContextEntry)
 import Servant.Auth.Server (AuthResult (..))
+import Text.Blaze.Html5 (Html)
 import Servant.Server (ServerError (..))
 import Crypto.Random (getRandomBytes)
 import Data.ByteArray qualified as BA
@@ -129,6 +130,36 @@ data RegisteredClient = RegisteredClient
   }
   deriving (Eq, Show)
 
+-- | Parameters passed to the login form renderer.
+--
+-- Custom renderers must produce an HTML form that POSTs to
+-- @authorize\/callback@ with at least the following fields:
+--
+-- * @username@ — the user's login name
+-- * @password@ — the user's password
+-- * @client_id@ — copied from 'lfp_client_id'
+-- * @redirect_uri@ — copied from 'lfp_redirect_uri'
+-- * @scope@ — copied from 'lfp_scope'
+-- * @state@ — copied from 'lfp_state' when present
+-- * @code_challenge@ — copied from 'lfp_code_challenge' when present
+-- * @code_challenge_method@ — copied from 'lfp_code_challenge_method' when present
+data LoginFormParams = LoginFormParams
+  { lfp_client_id :: Text
+  -- ^ OAuth client identifier
+  , lfp_redirect_uri :: Text
+  -- ^ Client's registered redirect URI
+  , lfp_scope :: Text
+  -- ^ Space-delimited requested scopes
+  , lfp_state :: Maybe Text
+  -- ^ Client's opaque state parameter
+  , lfp_code_challenge :: Maybe Text
+  -- ^ PKCE code challenge
+  , lfp_code_challenge_method :: Maybe Text
+  -- ^ PKCE challenge method (@S256@ or @plain@)
+  , lfp_error :: Maybe Text
+  -- ^ Error from a previous login attempt (e.g. @invalid_password@)
+  }
+
 -- | Global state for the OAuth authorization server.
 --
 -- Maintains all active authorization codes, refresh tokens,
@@ -145,6 +176,10 @@ data OAuthState usr = OAuthState
   -- ^ Base URL for the OAuth server
   , oauth_port :: Int
   -- ^ Port for the OAuth server
+  , login_form_renderer :: LoginFormParams -> Html
+  -- ^ Render the authorization login form.  Use 'defaultLoginFormRenderer'
+  -- from "Web.OAuth2.AuthorizeAPI" for the built-in page, or supply your
+  -- own function.
   }
 
 -- | Represents errors that can occur during the OAuth authentication process.
@@ -191,14 +226,21 @@ oauthErrorResponse base code description =
 --
 -- Creates a new OAuth state with no registered clients,
 -- authorization codes, or refresh tokens.
-initOAuthState :: forall usr. Text -> Int -> RefreshTokenPersistence usr -> OAuthState usr
-initOAuthState url port rtp =
+initOAuthState
+  :: forall usr
+   . Text
+  -> Int
+  -> RefreshTokenPersistence usr
+  -> (LoginFormParams -> Html)
+  -> OAuthState usr
+initOAuthState url port rtp renderer =
   OAuthState
     { auth_codes = Map.empty
     , refresh_token_persistence = rtp
     , registered_clients = Map.empty
     , oauth_url = url
     , oauth_port = port
+    , login_form_renderer = renderer
     }
 
 -- | Type alias for token values (authorization codes, refresh tokens, client IDs).

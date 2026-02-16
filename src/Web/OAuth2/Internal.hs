@@ -7,6 +7,7 @@
 -- callers should treat this interface as unstable.
 module Web.OAuth2.Internal
   ( validateScope
+  , defaultLoginFormRenderer
   , LoginForm (..)
   , handleAuthorizeCallback
   , handleTokenRequest
@@ -24,7 +25,7 @@ module Web.OAuth2.Internal
   , OAuthMetadata (..)
   ) where
 
-import Web.OAuth2.AuthorizeAPI (validateScope)
+import Web.OAuth2.AuthorizeAPI (defaultLoginFormRenderer, validateScope)
 import Web.OAuth2.AuthorizeCallbackAPI (LoginForm (..), handleAuthorizeCallback)
 import Web.OAuth2.MetadataAPI (OAuthMetadata (..), handleMetadata)
 import Web.OAuth2.RegisterAPI

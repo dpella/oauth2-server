@@ -1,6 +1,6 @@
 cabal-version:      2.2
 name:               oauth2-server
-version:            0.2.1.0
+version:            0.3.0.0
 license:            MPL-2.0
 license-file:       LICENSE
 author:             DPella AB

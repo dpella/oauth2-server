@@ -113,7 +113,17 @@ handleAuthorize
         if redirect_uri `elem` registered_client_redirect_uris
           then
             if validateScope scope registered_client_scope
-              then return (login_form cid redirect_uri)
+              then do
+                let params = LoginFormParams
+                      { lfp_client_id = cid
+                      , lfp_redirect_uri = redirect_uri
+                      , lfp_scope = scope
+                      , lfp_state = mb_state
+                      , lfp_code_challenge = code_challenge
+                      , lfp_code_challenge_method = code_challenge_method
+                      , lfp_error = error_msg
+                      }
+                return (login_form_renderer oauth_state params)
               else redirectWithError redirect_uri "invalid_scope" (Just "Requested scope is not allowed for this client")
           else badRequest "unauthorized_client" "Invalid redirect URI for client"
       Nothing -> authError "unauthorized_client" "Client not registered or invalid client_id"
@@ -135,50 +145,6 @@ handleAuthorize
       throwError $ oauthErrorResponse err401 error_code (Just desc)
 
     scope = fromMaybe "" mb_scope
-
-    login_form :: Text -> Text -> H.Html
-    login_form clientId redirectUri = H.docTypeHtml $ do
-      H.head $ do
-        H.title "OAuth Login"
-        H.style $
-          H.toHtml $
-            T.unlines
-              [ "body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f0f0f0; }"
-              , ".login-box { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 300px; text-align: center; }"
-              , ".logo { width: 80px; height: 80px; margin: 0 auto 1.5rem; display: block; }"
-              , "h2 { margin-top: 0; margin-bottom: 1.5rem; color: #333; }"
-              , "input { width: 100%; padding: 0.5rem; margin: 0.5rem 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }"
-              , "button { width: 100%; padding: 0.75rem; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; margin-top: 1rem; }"
-              , "button:hover { background-color: #0056b3; }"
-              , ".form-group { text-align: left; }"
-              , ".error-message { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 0.75rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }"
-              ]
-      H.body $ do
-        H.div H.! A.class_ "login-box" $ do
-          H.img H.! A.src "/static/logo.png" H.! A.alt "Logo" H.! A.class_ "logo"
-          H.h2 "Sign In"
-          case error_msg of
-            Just "invalid_password" -> H.div H.! A.class_ "error-message" $ "Invalid username or password"
-            Just err -> H.div H.! A.class_ "error-message" $ H.toHtml err
-            Nothing -> mempty
-          H.form H.! A.method "post" H.! A.action "authorize/callback" $ do
-            H.input H.! A.type_ "hidden" H.! A.name "client_id" H.! A.value (H.toValue clientId)
-            H.input H.! A.type_ "hidden" H.! A.name "redirect_uri" H.! A.value (H.toValue redirectUri)
-            H.input H.! A.type_ "hidden" H.! A.name "scope" H.! A.value (H.toValue scope)
-            forM_ mb_state $ \st ->
-              H.input H.! A.type_ "hidden" H.! A.name "state" H.! A.value (H.toValue st)
-            case code_challenge of
-              Just cc -> H.input H.! A.type_ "hidden" H.! A.name "code_challenge" H.! A.value (H.toValue cc)
-              Nothing -> mempty
-            case code_challenge_method of
-              Just ccm -> H.input H.! A.type_ "hidden" H.! A.name "code_challenge_method" H.! A.value (H.toValue ccm)
-              Nothing -> mempty
-
-            H.div H.! A.class_ "form-group" $ do
-              H.input H.! A.type_ "text" H.! A.name "username" H.! A.placeholder "Username" H.! A.required ""
-              H.input H.! A.type_ "password" H.! A.name "password" H.! A.placeholder "Password" H.! A.required ""
-
-            H.button H.! A.type_ "submit" $ "Sign In"
 
     redirectWithError :: Text -> Text -> Maybe Text -> Handler a
     redirectWithError redirectUri errorCode errorDescription =
@@ -227,3 +193,52 @@ validateScope requested allowed =
   let requested_scopes = T.words requested
       allowed_scopes = T.words allowed
   in  not (null requested_scopes) && all (`elem` allowed_scopes) requested_scopes
+
+-- | Default login form renderer.
+--
+-- Produces a self-contained HTML page with inline CSS that displays a
+-- centred login box, optional error banner, and username\/password fields.
+-- The form POSTs to @authorize\/callback@.
+--
+-- Pass this to 'initOAuthState' when you do not need a custom login page.
+defaultLoginFormRenderer :: LoginFormParams -> H.Html
+defaultLoginFormRenderer LoginFormParams{..} = H.docTypeHtml $ do
+  H.head $ do
+    H.title "OAuth Login"
+    H.style $
+      H.toHtml $
+        T.unlines
+          [ "body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f0f0f0; }"
+          , ".login-box { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 300px; text-align: center; }"
+          , ".logo { width: 80px; height: 80px; margin: 0 auto 1.5rem; display: block; }"
+          , "h2 { margin-top: 0; margin-bottom: 1.5rem; color: #333; }"
+          , "input { width: 100%; padding: 0.5rem; margin: 0.5rem 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }"
+          , "button { width: 100%; padding: 0.75rem; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; margin-top: 1rem; }"
+          , "button:hover { background-color: #0056b3; }"
+          , ".form-group { text-align: left; }"
+          , ".error-message { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 0.75rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }"
+          ]
+  H.body $ do
+    H.div H.! A.class_ "login-box" $ do
+      H.img H.! A.src "/static/logo.png" H.! A.alt "Logo" H.! A.class_ "logo"
+      H.h2 "Sign In"
+      case lfp_error of
+        Just "invalid_password" -> H.div H.! A.class_ "error-message" $ "Invalid username or password"
+        Just err -> H.div H.! A.class_ "error-message" $ H.toHtml err
+        Nothing -> mempty
+      H.form H.! A.method "post" H.! A.action "authorize/callback" $ do
+        H.input H.! A.type_ "hidden" H.! A.name "client_id" H.! A.value (H.toValue lfp_client_id)
+        H.input H.! A.type_ "hidden" H.! A.name "redirect_uri" H.! A.value (H.toValue lfp_redirect_uri)
+        H.input H.! A.type_ "hidden" H.! A.name "scope" H.! A.value (H.toValue lfp_scope)
+        forM_ lfp_state $ \st ->
+          H.input H.! A.type_ "hidden" H.! A.name "state" H.! A.value (H.toValue st)
+        forM_ lfp_code_challenge $ \cc ->
+          H.input H.! A.type_ "hidden" H.! A.name "code_challenge" H.! A.value (H.toValue cc)
+        forM_ lfp_code_challenge_method $ \ccm ->
+          H.input H.! A.type_ "hidden" H.! A.name "code_challenge_method" H.! A.value (H.toValue ccm)
+
+        H.div H.! A.class_ "form-group" $ do
+          H.input H.! A.type_ "text" H.! A.name "username" H.! A.placeholder "Username" H.! A.required ""
+          H.input H.! A.type_ "password" H.! A.name "password" H.! A.placeholder "Password" H.! A.required ""
+
+        H.button H.! A.type_ "submit" $ "Sign In"

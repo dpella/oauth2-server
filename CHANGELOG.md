@@ -1,5 +1,12 @@
 # Changelog
 
+# 0.3.0.0
+## Added
+- Configurable login form: `initOAuthState` now accepts a `LoginFormParams -> Html` renderer, allowing library users to fully replace the built-in login page. Pass `defaultLoginFormRenderer` for the previous behaviour.
+
+## Changed
+- **Breaking:** `initOAuthState` takes an additional `(LoginFormParams -> Html)` argument.
+
 # 0.2.1.0
 ## Added
 - Dynamic client management endpoint at `/register/{client_id}` supporting GET/PUT/DELETE for registrations authenticated via the issued `registration_access_token`.
