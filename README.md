@@ -1,5 +1,7 @@
 # oauth2-server — OAuth 2.1 Authorization Server for Servant
 
+[![Hackage](https://img.shields.io/hackage/v/oauth2-server.svg)](https://hackage.haskell.org/package/oauth2-server)
+
 `oauth2-server` is a small, composable OAuth 2.1 authorization server for Haskell/Servant. It implements the core endpoints for authorization code with PKCE, dynamic client registration, token issuance and refresh, and discovery metadata. It integrates with `servant-auth-server` to mint JWT access tokens and lets you plug in your own username/password authentication via a simple typeclass.
 
 This library is designed to be embedded inside your existing Servant application, mounting the OAuth routes alongside your APIs.
