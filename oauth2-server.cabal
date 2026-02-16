@@ -53,25 +53,24 @@ library
     Web.OAuth2.MetadataAPI
   build-depends:
       base >=4.18 && <4.22
-    , servant
-    , servant-server
-    , servant-auth-server
-    , servant-blaze
-    , text
-    , bytestring
-    , aeson
-    , containers
-    , time
-    , random
-    , blaze-html
-    , network-uri
-    , http-api-data
-    , http-types
-    , cryptonite
-    , memory
-    , base64-bytestring
-    , transformers
-
+    , servant >=0.20 && <0.21
+    , servant-server >=0.20 && <0.21
+    , servant-auth-server >=0.4.9 && <0.5
+    , servant-blaze >=0.9 && <0.10
+    , text >=2.0 && <2.2
+    , bytestring >=0.11 && <0.13
+    , aeson >=2.1 && <2.3
+    , containers >=0.6 && <0.8
+    , time >=1.12 && <1.15
+    , random >=1.2 && <1.4
+    , blaze-html >=0.9 && <0.10
+    , network-uri >=2.6 && <2.7
+    , http-api-data >=0.5 && <0.7
+    , http-types >=0.12 && <0.13
+    , cryptonite >=0.29 && <0.31
+    , memory >=0.17 && <0.19
+    , base64-bytestring >=1.2 && <1.3
+    , transformers >=0.5 && <0.7
 
 test-suite test-oauth2-server
   type: exitcode-stdio-1.0
