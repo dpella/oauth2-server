@@ -26,235 +26,235 @@ import Web.OAuth2.Types qualified as OAuthTypes
 
 tests :: TestTree
 tests =
-  testGroup
-    "Authorize endpoint"
-    [ rejectsUnknownClient
-    , rejectsMismatchedRedirect
-    , rejectsInvalidScope
-    , rendersLoginFormWithPkce
-    , echoesErrorMessage
-    , omitsStateHiddenFieldWhenAbsent
-    , missingParametersReturnInvalidRequest
-    , rejectsUnsupportedResponseType
-    , usesCustomLoginFormRenderer
-    , validateScopeTests
-    ]
+    testGroup
+        "Authorize endpoint"
+        [ rejectsUnknownClient
+        , rejectsMismatchedRedirect
+        , rejectsInvalidScope
+        , rendersLoginFormWithPkce
+        , echoesErrorMessage
+        , omitsStateHiddenFieldWhenAbsent
+        , missingParametersReturnInvalidRequest
+        , rejectsUnsupportedResponseType
+        , usesCustomLoginFormRenderer
+        , validateScopeTests
+        ]
 
 withApp :: (MVar (OAuthState TestUser) -> Application -> IO a) -> IO a
 withApp action = do
-  (stateVar, _ctx, app) <- createTestApplication
-  action stateVar app
+    (stateVar, _ctx, app) <- createTestApplication
+    action stateVar app
 
 reconstructError :: LBS.ByteString -> IO OAuthError
 reconstructError body =
-  case eitherDecode body of
-    Left err -> assertFailure ("Failed to decode OAuthError: " <> err)
-    Right val -> pure val
+    case eitherDecode body of
+        Left err -> assertFailure ("Failed to decode OAuthError: " <> err)
+        Right val -> pure val
 
 rejectsUnknownClient :: TestTree
 rejectsUnknownClient = testCase "returns 401 for unknown client_id" $
-  withApp $ \_ app -> do
-    let query =
-          [ ("response_type", Just "code")
-          , ("client_id", Just "missing-client")
-          , ("redirect_uri", Just "http://localhost:4000/cb")
-          , ("scope", Just "read")
-          , ("state", Just "state-1")
-          ]
-        path = BS.concat ["/authorize", renderQuery True query]
-    res <-
-      runSession
-        (srequest (SRequest (setPath defaultRequest path) LBS.empty))
-        app
-    simpleStatus res @?= status401
-    errResp <- reconstructError (simpleBody res)
-    OAuthTypes.error errResp @?= "unauthorized_client"
+    withApp $ \_ app -> do
+        let query =
+                [ ("response_type", Just "code")
+                , ("client_id", Just "missing-client")
+                , ("redirect_uri", Just "http://localhost:4000/cb")
+                , ("scope", Just "read")
+                , ("state", Just "state-1")
+                ]
+            path = BS.concat ["/authorize", renderQuery True query]
+        res <-
+            runSession
+                (srequest (SRequest (setPath defaultRequest path) LBS.empty))
+                app
+        simpleStatus res @?= status401
+        errResp <- reconstructError (simpleBody res)
+        OAuthTypes.error errResp @?= "unauthorized_client"
 
 rejectsMismatchedRedirect :: TestTree
 rejectsMismatchedRedirect = testCase "400 when redirect_uri not registered" $
-  withApp $ \stateVar app -> do
-    addRegisteredClientToState stateVar (mkPublicClient "cid-1" ["http://localhost:4000/callback"] "read write")
-    let query =
-          [ ("response_type", Just "code")
-          , ("client_id", Just "cid-1")
-          , ("redirect_uri", Just "http://localhost:4000/evil")
-          , ("scope", Just "read")
-          , ("state", Just "s")
-          ]
-        path = BS.concat ["/authorize", renderQuery True query]
-    res <-
-      runSession
-        (srequest (SRequest (setPath defaultRequest path) LBS.empty))
-        app
-    simpleStatus res @?= status400
-    errResp <- reconstructError (simpleBody res)
-    OAuthTypes.error errResp @?= "unauthorized_client"
+    withApp $ \stateVar app -> do
+        addRegisteredClientToState stateVar (mkPublicClient "cid-1" ["http://localhost:4000/callback"] "read write")
+        let query =
+                [ ("response_type", Just "code")
+                , ("client_id", Just "cid-1")
+                , ("redirect_uri", Just "http://localhost:4000/evil")
+                , ("scope", Just "read")
+                , ("state", Just "s")
+                ]
+            path = BS.concat ["/authorize", renderQuery True query]
+        res <-
+            runSession
+                (srequest (SRequest (setPath defaultRequest path) LBS.empty))
+                app
+        simpleStatus res @?= status400
+        errResp <- reconstructError (simpleBody res)
+        OAuthTypes.error errResp @?= "unauthorized_client"
 
 rejectsInvalidScope :: TestTree
 rejectsInvalidScope = testCase "redirects with invalid_scope when request exceeds client allow list" $
-  withApp $ \stateVar app -> do
-    addRegisteredClientToState stateVar (mkPublicClient "cid-2" ["http://localhost:4000/callback"] "read write")
-    let query =
-          [ ("response_type", Just "code")
-          , ("client_id", Just "cid-2")
-          , ("redirect_uri", Just "http://localhost:4000/callback")
-          , ("scope", Just "admin")
-          , ("state", Just "s")
-          ]
-        path = BS.concat ["/authorize", renderQuery True query]
-    res <-
-      runSession
-        (srequest (SRequest (setPath defaultRequest path) LBS.empty))
-        app
-    simpleStatus res @?= status303
-    case lookup "Location" (simpleHeaders res) of
-      Nothing -> assertFailure "Location header missing on invalid scope redirect"
-      Just loc -> do
-        let locText = TE.decodeUtf8 loc
-        assertBool "redirect URI preserved" ("http://localhost:4000/callback" `T.isPrefixOf` locText)
-        assertBool "invalid_scope error included" ("error=invalid_scope" `T.isInfixOf` locText)
-        assertBool "state propagated" ("state=s" `T.isInfixOf` locText)
+    withApp $ \stateVar app -> do
+        addRegisteredClientToState stateVar (mkPublicClient "cid-2" ["http://localhost:4000/callback"] "read write")
+        let query =
+                [ ("response_type", Just "code")
+                , ("client_id", Just "cid-2")
+                , ("redirect_uri", Just "http://localhost:4000/callback")
+                , ("scope", Just "admin")
+                , ("state", Just "s")
+                ]
+            path = BS.concat ["/authorize", renderQuery True query]
+        res <-
+            runSession
+                (srequest (SRequest (setPath defaultRequest path) LBS.empty))
+                app
+        simpleStatus res @?= status303
+        case lookup "Location" (simpleHeaders res) of
+            Nothing -> assertFailure "Location header missing on invalid scope redirect"
+            Just loc -> do
+                let locText = TE.decodeUtf8 loc
+                assertBool "redirect URI preserved" ("http://localhost:4000/callback" `T.isPrefixOf` locText)
+                assertBool "invalid_scope error included" ("error=invalid_scope" `T.isInfixOf` locText)
+                assertBool "state propagated" ("state=s" `T.isInfixOf` locText)
 
 omitsStateHiddenFieldWhenAbsent :: TestTree
 omitsStateHiddenFieldWhenAbsent = testCase "does not propagate state when request omitted it" $
-  withApp $ \stateVar app -> do
-    addRegisteredClientToState stateVar (mkPublicClient "cid-5" ["http://localhost:4000/cb"] "read")
-    let query =
-          [ ("response_type", Just "code")
-          , ("client_id", Just "cid-5")
-          , ("redirect_uri", Just "http://localhost:4000/cb")
-          , ("scope", Just "read")
-          ]
-        path = BS.concat ["/authorize", renderQuery True query]
-    res <-
-      runSession
-        (srequest (SRequest (setPath defaultRequest path) LBS.empty))
-        app
-    simpleStatus res @?= status200
-    let bodyTxt = LBS.toStrict (simpleBody res)
-    assertBool "state input absent" (not ("name=\"state\"" `BS.isInfixOf` bodyTxt))
+    withApp $ \stateVar app -> do
+        addRegisteredClientToState stateVar (mkPublicClient "cid-5" ["http://localhost:4000/cb"] "read")
+        let query =
+                [ ("response_type", Just "code")
+                , ("client_id", Just "cid-5")
+                , ("redirect_uri", Just "http://localhost:4000/cb")
+                , ("scope", Just "read")
+                ]
+            path = BS.concat ["/authorize", renderQuery True query]
+        res <-
+            runSession
+                (srequest (SRequest (setPath defaultRequest path) LBS.empty))
+                app
+        simpleStatus res @?= status200
+        let bodyTxt = LBS.toStrict (simpleBody res)
+        assertBool "state input absent" (not ("name=\"state\"" `BS.isInfixOf` bodyTxt))
 
 missingParametersReturnInvalidRequest :: TestTree
 missingParametersReturnInvalidRequest = testCase "returns JSON invalid_request when required params absent" $
-  withApp $ \_ app -> do
-    res <-
-      runSession
-        (srequest (SRequest (setPath defaultRequest "/authorize") LBS.empty))
-        app
-    simpleStatus res @?= status400
-    lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
-    errResp <- reconstructError (simpleBody res)
-    OAuthTypes.error errResp @?= "invalid_request"
+    withApp $ \_ app -> do
+        res <-
+            runSession
+                (srequest (SRequest (setPath defaultRequest "/authorize") LBS.empty))
+                app
+        simpleStatus res @?= status400
+        lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
+        errResp <- reconstructError (simpleBody res)
+        OAuthTypes.error errResp @?= "invalid_request"
 
 rendersLoginFormWithPkce :: TestTree
 rendersLoginFormWithPkce = testCase "renders login form for valid request including PKCE fields" $
-  withApp $ \stateVar app -> do
-    addRegisteredClientToState stateVar (mkPublicClient "cid-3" ["http://localhost:4000/cb"] "read write")
-    let query =
-          [ ("response_type", Just "code")
-          , ("client_id", Just "cid-3")
-          , ("redirect_uri", Just "http://localhost:4000/cb")
-          , ("scope", Just "read write")
-          , ("state", Just "xyz")
-          , ("code_challenge", Just "pkce-challenge")
-          , ("code_challenge_method", Just "S256")
-          ]
-        path = BS.concat ["/authorize", renderQuery True query]
-    res <-
-      runSession
-        (srequest (SRequest (setPath defaultRequest path) LBS.empty))
-        app
-    simpleStatus res @?= status200
-    let bodyTxt = LBS.toStrict (simpleBody res)
-    assertBool "code_challenge field present" ("name=\"code_challenge\"" `BS.isInfixOf` bodyTxt)
-    assertBool "code_challenge_method field present" ("name=\"code_challenge_method\"" `BS.isInfixOf` bodyTxt)
-    assertBool "state preserved" ("value=\"xyz\"" `BS.isInfixOf` bodyTxt)
+    withApp $ \stateVar app -> do
+        addRegisteredClientToState stateVar (mkPublicClient "cid-3" ["http://localhost:4000/cb"] "read write")
+        let query =
+                [ ("response_type", Just "code")
+                , ("client_id", Just "cid-3")
+                , ("redirect_uri", Just "http://localhost:4000/cb")
+                , ("scope", Just "read write")
+                , ("state", Just "xyz")
+                , ("code_challenge", Just "pkce-challenge")
+                , ("code_challenge_method", Just "S256")
+                ]
+            path = BS.concat ["/authorize", renderQuery True query]
+        res <-
+            runSession
+                (srequest (SRequest (setPath defaultRequest path) LBS.empty))
+                app
+        simpleStatus res @?= status200
+        let bodyTxt = LBS.toStrict (simpleBody res)
+        assertBool "code_challenge field present" ("name=\"code_challenge\"" `BS.isInfixOf` bodyTxt)
+        assertBool "code_challenge_method field present" ("name=\"code_challenge_method\"" `BS.isInfixOf` bodyTxt)
+        assertBool "state preserved" ("value=\"xyz\"" `BS.isInfixOf` bodyTxt)
 
 echoesErrorMessage :: TestTree
 echoesErrorMessage = testCase "renders login form with error message when provided" $
-  withApp $ \stateVar app -> do
-    addRegisteredClientToState stateVar (mkPublicClient "cid-4" ["http://localhost:4000/cb"] "read")
-    let query =
-          [ ("response_type", Just "code")
-          , ("client_id", Just "cid-4")
-          , ("redirect_uri", Just "http://localhost:4000/cb")
-          , ("scope", Just "read")
-          , ("state", Just "s")
-          , ("error", Just "invalid_password")
-          ]
-        path = BS.concat ["/authorize", renderQuery True query]
-    res <-
-      runSession
-        (srequest (SRequest (setPath defaultRequest path) LBS.empty))
-        app
-    simpleStatus res @?= status200
-    let bodyTxt = LBS.toStrict (simpleBody res)
-    assertBool "error message rendered" ("Invalid username or password" `BS.isInfixOf` bodyTxt)
+    withApp $ \stateVar app -> do
+        addRegisteredClientToState stateVar (mkPublicClient "cid-4" ["http://localhost:4000/cb"] "read")
+        let query =
+                [ ("response_type", Just "code")
+                , ("client_id", Just "cid-4")
+                , ("redirect_uri", Just "http://localhost:4000/cb")
+                , ("scope", Just "read")
+                , ("state", Just "s")
+                , ("error", Just "invalid_password")
+                ]
+            path = BS.concat ["/authorize", renderQuery True query]
+        res <-
+            runSession
+                (srequest (SRequest (setPath defaultRequest path) LBS.empty))
+                app
+        simpleStatus res @?= status200
+        let bodyTxt = LBS.toStrict (simpleBody res)
+        assertBool "error message rendered" ("Invalid username or password" `BS.isInfixOf` bodyTxt)
 
 rejectsUnsupportedResponseType :: TestTree
 rejectsUnsupportedResponseType = testCase "rejects response_type=token with unsupported_response_type" $
-  withApp $ \stateVar app -> do
-    addRegisteredClientToState stateVar (mkPublicClient "cid-6" ["http://localhost:4000/cb"] "read")
-    let query =
-          [ ("response_type", Just "token")
-          , ("client_id", Just "cid-6")
-          , ("redirect_uri", Just "http://localhost:4000/cb")
-          , ("scope", Just "read")
-          ]
-        path = BS.concat ["/authorize", renderQuery True query]
-    res <-
-      runSession
-        (srequest (SRequest (setPath defaultRequest path) LBS.empty))
-        app
-    simpleStatus res @?= status400
-    errResp <- reconstructError (simpleBody res)
-    OAuthTypes.error errResp @?= "unsupported_response_type"
+    withApp $ \stateVar app -> do
+        addRegisteredClientToState stateVar (mkPublicClient "cid-6" ["http://localhost:4000/cb"] "read")
+        let query =
+                [ ("response_type", Just "token")
+                , ("client_id", Just "cid-6")
+                , ("redirect_uri", Just "http://localhost:4000/cb")
+                , ("scope", Just "read")
+                ]
+            path = BS.concat ["/authorize", renderQuery True query]
+        res <-
+            runSession
+                (srequest (SRequest (setPath defaultRequest path) LBS.empty))
+                app
+        simpleStatus res @?= status400
+        errResp <- reconstructError (simpleBody res)
+        OAuthTypes.error errResp @?= "unsupported_response_type"
 
 usesCustomLoginFormRenderer :: TestTree
 usesCustomLoginFormRenderer = testCase "authorize endpoint invokes custom login_form_renderer" $ do
-  let customRenderer _params = H.unsafeByteString "CUSTOM_FORM"
-  persistence <- mkDefaultRefreshTokenPersistence
-  stateVar <- newMVar (initOAuthState @TestUser "http://localhost:8080" 8080 persistence customRenderer)
-  addRegisteredClientToState stateVar (mkPublicClient "cid-custom" ["http://localhost:4000/cb"] "read")
-  ctx <- createTestContext
-  let app = serveWithContext (Proxy :: Proxy OAuthAPI) ctx (oAuthAPI stateVar ctx)
-      query =
-        [ ("response_type", Just "code")
-        , ("client_id", Just "cid-custom")
-        , ("redirect_uri", Just "http://localhost:4000/cb")
-        , ("scope", Just "read")
-        , ("state", Just "xyz")
-        , ("code_challenge", Just "test-challenge")
-        , ("code_challenge_method", Just "S256")
-        ]
-      path = BS.concat ["/authorize", renderQuery True query]
-  res <-
-    runSession
-      (srequest (SRequest (setPath defaultRequest path) LBS.empty))
-      app
-  simpleStatus res @?= status200
-  let bodyTxt = LBS.toStrict (simpleBody res)
-  assertBool "custom renderer output present" ("CUSTOM_FORM" `BS.isInfixOf` bodyTxt)
-  assertBool "default form not rendered" (not ("Sign In" `BS.isInfixOf` bodyTxt))
+    let customRenderer _params = H.unsafeByteString "CUSTOM_FORM"
+    persistence <- mkDefaultRefreshTokenPersistence
+    stateVar <- newMVar (initOAuthState @TestUser "http://localhost:8080" 8080 persistence customRenderer)
+    addRegisteredClientToState stateVar (mkPublicClient "cid-custom" ["http://localhost:4000/cb"] "read")
+    ctx <- createTestContext
+    let app = serveWithContext (Proxy :: Proxy OAuthAPI) ctx (oAuthAPI stateVar ctx)
+        query =
+            [ ("response_type", Just "code")
+            , ("client_id", Just "cid-custom")
+            , ("redirect_uri", Just "http://localhost:4000/cb")
+            , ("scope", Just "read")
+            , ("state", Just "xyz")
+            , ("code_challenge", Just "test-challenge")
+            , ("code_challenge_method", Just "S256")
+            ]
+        path = BS.concat ["/authorize", renderQuery True query]
+    res <-
+        runSession
+            (srequest (SRequest (setPath defaultRequest path) LBS.empty))
+            app
+    simpleStatus res @?= status200
+    let bodyTxt = LBS.toStrict (simpleBody res)
+    assertBool "custom renderer output present" ("CUSTOM_FORM" `BS.isInfixOf` bodyTxt)
+    assertBool "default form not rendered" (not ("Sign In" `BS.isInfixOf` bodyTxt))
 
 validateScopeTests :: TestTree
 validateScopeTests =
-  testGroup
-    "validateScope"
-    [ testCase "single scope within allowed" $
-        validateScope "read" "read write" @?= True
-    , testCase "multiple scopes within allowed" $
-        validateScope "read write" "read write admin" @?= True
-    , testCase "exact match" $
-        validateScope "read write" "read write" @?= True
-    , testCase "rejects scope not in allowed list" $
-        validateScope "admin" "read write" @?= False
-    , testCase "rejects partially invalid scope" $
-        validateScope "read admin" "read write" @?= False
-    , testCase "rejects empty requested scope" $
-        validateScope "" "read write" @?= False
-    , testCase "duplicate requested scopes still valid" $
-        validateScope "read read" "read write" @?= True
-    , testCase "extra whitespace handled" $
-        validateScope "read  write" "read write" @?= True
-    ]
+    testGroup
+        "validateScope"
+        [ testCase "single scope within allowed" $
+            validateScope "read" "read write" @?= True
+        , testCase "multiple scopes within allowed" $
+            validateScope "read write" "read write admin" @?= True
+        , testCase "exact match" $
+            validateScope "read write" "read write" @?= True
+        , testCase "rejects scope not in allowed list" $
+            validateScope "admin" "read write" @?= False
+        , testCase "rejects partially invalid scope" $
+            validateScope "read admin" "read write" @?= False
+        , testCase "rejects empty requested scope" $
+            validateScope "" "read write" @?= False
+        , testCase "duplicate requested scopes still valid" $
+            validateScope "read read" "read write" @?= True
+        , testCase "extra whitespace handled" $
+            validateScope "read  write" "read write" @?= True
+        ]

@@ -4,27 +4,31 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
--- |
--- Module:      Web.OAuth2.Types
--- Copyright:   (c) DPella AB 2025
--- License:     MPL-2.0
--- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
---
--- Core types and data structures for the OAuth 2.1 implementation.
---
--- This module defines the fundamental types used throughout the OAuth system:
--- * Authorization codes with expiry and PKCE parameters
--- * Refresh tokens for long-lived access
--- * Client registrations with allowed grants and scopes
--- * Server state management
---
--- The types support the OAuth 2.1 authorization code flow with PKCE
--- as defined in RFC 6749 and RFC 7636.
+{- |
+Module:      Web.OAuth2.Types
+Copyright:   (c) DPella AB 2025
+License:     MPL-2.0
+Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
+
+Core types and data structures for the OAuth 2.1 implementation.
+
+This module defines the fundamental types used throughout the OAuth system:
+* Authorization codes with expiry and PKCE parameters
+* Refresh tokens for long-lived access
+* Client registrations with allowed grants and scopes
+* Server state management
+
+The types support the OAuth 2.1 authorization code flow with PKCE
+as defined in RFC 6749 and RFC 7636.
+-}
 module Web.OAuth2.Types where
 
 import Control.Concurrent.MVar (modifyMVar_, newMVar, readMVar)
+import Crypto.Random (getRandomBytes)
 import Data.Aeson (defaultOptions, encode, omitNothingFields)
 import Data.Aeson.TH (deriveJSON)
+import Data.ByteArray qualified as BA
+import Data.ByteString.Base64.URL qualified as B64URL
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -35,255 +39,262 @@ import Network.HTTP.Types (hContentType)
 import Network.URI
 import Servant (Context, HasContextEntry)
 import Servant.Auth.Server (AuthResult (..))
-import Text.Blaze.Html5 (Html)
 import Servant.Server (ServerError (..))
-import Crypto.Random (getRandomBytes)
-import Data.ByteArray qualified as BA
-import Data.ByteString.Base64.URL qualified as B64URL
+import Text.Blaze.Html5 (Html)
 
--- | Authorization code issued after successful authentication.
---
--- Authorization codes are short-lived (10 minutes) and single-use.
--- They must be exchanged for access tokens at the token endpoint.
+{- | Authorization code issued after successful authentication.
+
+Authorization codes are short-lived (10 minutes) and single-use.
+They must be exchanged for access tokens at the token endpoint.
+-}
 data AuthCode usr = AuthCode
-  { auth_code_value :: Text
-  -- ^ The authorization code value
-  , auth_code_client_id :: Text
-  -- ^ Client that requested this code
-  , auth_code_user :: usr
-  -- ^ Authenticated user
-  , auth_code_redirect_uri :: Text
-  -- ^ Redirect URI that must match token request
-  , auth_code_scope :: Text
-  -- ^ Granted scope
-  , auth_code_expiry :: UTCTime
-  -- ^ When this code expires
-  , auth_code_challenge :: Maybe Text
-  -- ^ PKCE code challenge
-  , auth_code_challenge_method :: Maybe Text
-  -- ^ PKCE challenge method (S256 or plain)
-  }
+    { auth_code_value :: Text
+    -- ^ The authorization code value
+    , auth_code_client_id :: Text
+    -- ^ Client that requested this code
+    , auth_code_user :: usr
+    -- ^ Authenticated user
+    , auth_code_redirect_uri :: Text
+    -- ^ Redirect URI that must match token request
+    , auth_code_scope :: Text
+    -- ^ Granted scope
+    , auth_code_expiry :: UTCTime
+    -- ^ When this code expires
+    , auth_code_challenge :: Maybe Text
+    -- ^ PKCE code challenge
+    , auth_code_challenge_method :: Maybe Text
+    -- ^ PKCE challenge method (S256 or plain)
+    }
 
--- | Refresh token for obtaining new access tokens.
---
--- Refresh tokens are long-lived and can be used multiple times
--- to obtain new access tokens when the current one expires.
+{- | Refresh token for obtaining new access tokens.
+
+Refresh tokens are long-lived and can be used multiple times
+to obtain new access tokens when the current one expires.
+-}
 data RefreshToken usr = RefreshToken
-  { refresh_token_value :: Text
-  -- ^ The refresh token value
-  , refresh_token_client_id :: Text
-  -- ^ Client that owns this token
-  , refresh_token_user :: usr
-  -- ^ User associated with this token
-  , refresh_token_scope :: Text
-  -- ^ Maximum scope for new access tokens
-  }
+    { refresh_token_value :: Text
+    -- ^ The refresh token value
+    , refresh_token_client_id :: Text
+    -- ^ Client that owns this token
+    , refresh_token_user :: usr
+    -- ^ User associated with this token
+    , refresh_token_scope :: Text
+    -- ^ Maximum scope for new access tokens
+    }
 
 -- | Persistence callbacks for refresh tokens.
 data RefreshTokenPersistence usr = RefreshTokenPersistence
-  { persistRefreshToken :: RefreshToken usr -> IO ()
-  -- ^ Persist a refresh token
-  , deleteRefreshToken :: Text -> IO ()
-  -- ^ Delete a persisted refresh token by its value
-  , lookupRefreshToken :: Text -> IO (Maybe (RefreshToken usr))
-  -- ^ Lookup a refresh token
-  }
+    { persistRefreshToken :: RefreshToken usr -> IO ()
+    -- ^ Persist a refresh token
+    , deleteRefreshToken :: Text -> IO ()
+    -- ^ Delete a persisted refresh token by its value
+    , lookupRefreshToken :: Text -> IO (Maybe (RefreshToken usr))
+    -- ^ Lookup a refresh token
+    }
 
 -- | Default Map-backed refresh token persistence implementation.
 mkDefaultRefreshTokenPersistence :: IO (RefreshTokenPersistence usr)
 mkDefaultRefreshTokenPersistence = do
-  rt_st <- newMVar Map.empty
-  pure
-    RefreshTokenPersistence
-      { persistRefreshToken = \rt -> modifyMVar_ rt_st $ \mp ->
-          pure (Map.insert (refresh_token_value rt) rt mp)
-      , deleteRefreshToken = \tok -> modifyMVar_ rt_st $ \mp ->
-          pure (Map.delete tok mp)
-      , lookupRefreshToken = \tok ->
-          readMVar rt_st >>= \mp ->
-            pure (Map.lookup tok mp)
-      }
+    rt_st <- newMVar Map.empty
+    pure
+        RefreshTokenPersistence
+            { persistRefreshToken = \rt -> modifyMVar_ rt_st $ \mp ->
+                pure (Map.insert (refresh_token_value rt) rt mp)
+            , deleteRefreshToken = \tok -> modifyMVar_ rt_st $ \mp ->
+                pure (Map.delete tok mp)
+            , lookupRefreshToken = \tok ->
+                readMVar rt_st >>= \mp ->
+                    pure (Map.lookup tok mp)
+            }
 
--- | OAuth client registration information.
---
--- Contains all metadata about a registered OAuth client including
--- allowed redirect URIs, grant types, and maximum requestable scope.
+{- | OAuth client registration information.
+
+Contains all metadata about a registered OAuth client including
+allowed redirect URIs, grant types, and maximum requestable scope.
+-}
 data RegisteredClient = RegisteredClient
-  { registered_client_id :: Text
-  -- ^ Unique registered_client identifier
-  , registered_client_name :: Text
-  -- ^ Human-readable registered_client name
-  , registered_client_secret :: Maybe Text
-  -- ^ Secret for confidential registered_clients (Nothing for public registered_clients)
-  , registered_client_redirect_uris :: [Text]
-  -- ^ Allowed redirect URIs
-  , registered_client_grant_types :: [Text]
-  -- ^ Allowed OAuth grant types
-  , registered_client_response_types :: [Text]
-  -- ^ Allowed OAuth response types
-  , registered_client_scope :: Text
-  -- ^ Maximum scope this registered_client can request
-  , registered_client_token_endpoint_auth_method :: Text
-  -- ^ Required auth method at token endpoint
-  , registered_client_registration_access_token :: Maybe Text
-  -- ^ Registration access token issued for dynamic client management
-  }
-  deriving (Eq, Show)
+    { registered_client_id :: Text
+    -- ^ Unique registered_client identifier
+    , registered_client_name :: Text
+    -- ^ Human-readable registered_client name
+    , registered_client_secret :: Maybe Text
+    -- ^ Secret for confidential registered_clients (Nothing for public registered_clients)
+    , registered_client_redirect_uris :: [Text]
+    -- ^ Allowed redirect URIs
+    , registered_client_grant_types :: [Text]
+    -- ^ Allowed OAuth grant types
+    , registered_client_response_types :: [Text]
+    -- ^ Allowed OAuth response types
+    , registered_client_scope :: Text
+    -- ^ Maximum scope this registered_client can request
+    , registered_client_token_endpoint_auth_method :: Text
+    -- ^ Required auth method at token endpoint
+    , registered_client_registration_access_token :: Maybe Text
+    -- ^ Registration access token issued for dynamic client management
+    }
+    deriving (Eq, Show)
 
--- | Parameters passed to the login form renderer.
---
--- Custom renderers must produce an HTML form that POSTs to
--- @authorize\/callback@ with at least the following fields:
---
--- * @username@ — the user's login name
--- * @password@ — the user's password
--- * @client_id@ — copied from 'lfp_client_id'
--- * @redirect_uri@ — copied from 'lfp_redirect_uri'
--- * @scope@ — copied from 'lfp_scope'
--- * @state@ — copied from 'lfp_state' when present
--- * @code_challenge@ — copied from 'lfp_code_challenge' when present
--- * @code_challenge_method@ — copied from 'lfp_code_challenge_method' when present
+{- | Parameters passed to the login form renderer.
+
+Custom renderers must produce an HTML form that POSTs to
+@authorize\/callback@ with at least the following fields:
+
+* @username@ — the user's login name
+* @password@ — the user's password
+* @client_id@ — copied from 'lfp_client_id'
+* @redirect_uri@ — copied from 'lfp_redirect_uri'
+* @scope@ — copied from 'lfp_scope'
+* @state@ — copied from 'lfp_state' when present
+* @code_challenge@ — copied from 'lfp_code_challenge' when present
+* @code_challenge_method@ — copied from 'lfp_code_challenge_method' when present
+-}
 data LoginFormParams = LoginFormParams
-  { lfp_client_id :: Text
-  -- ^ OAuth client identifier
-  , lfp_redirect_uri :: Text
-  -- ^ Client's registered redirect URI
-  , lfp_scope :: Text
-  -- ^ Space-delimited requested scopes
-  , lfp_state :: Maybe Text
-  -- ^ Client's opaque state parameter
-  , lfp_code_challenge :: Maybe Text
-  -- ^ PKCE code challenge
-  , lfp_code_challenge_method :: Maybe Text
-  -- ^ PKCE challenge method (@S256@ or @plain@)
-  , lfp_error :: Maybe Text
-  -- ^ Error from a previous login attempt (e.g. @invalid_password@)
-  }
+    { lfp_client_id :: Text
+    -- ^ OAuth client identifier
+    , lfp_redirect_uri :: Text
+    -- ^ Client's registered redirect URI
+    , lfp_scope :: Text
+    -- ^ Space-delimited requested scopes
+    , lfp_state :: Maybe Text
+    -- ^ Client's opaque state parameter
+    , lfp_code_challenge :: Maybe Text
+    -- ^ PKCE code challenge
+    , lfp_code_challenge_method :: Maybe Text
+    -- ^ PKCE challenge method (@S256@ or @plain@)
+    , lfp_error :: Maybe Text
+    -- ^ Error from a previous login attempt (e.g. @invalid_password@)
+    }
 
--- | Global state for the OAuth authorization server.
---
--- Maintains all active authorization codes, refresh tokens,
--- and registered clients. This state is shared across all
--- OAuth endpoints via an MVar.
+{- | Global state for the OAuth authorization server.
+
+Maintains all active authorization codes, refresh tokens,
+and registered clients. This state is shared across all
+OAuth endpoints via an MVar.
+-}
 data OAuthState usr = OAuthState
-  { auth_codes :: Map.Map Text (AuthCode usr)
-  -- ^ Active authorization codes indexed by code value
-  , refresh_token_persistence :: RefreshTokenPersistence usr
-  -- ^ Persistence layer for refresh tokens
-  , registered_clients :: Map.Map Text RegisteredClient
-  -- ^ Registered clients indexed by client_idQ
-  , oauth_url :: Text
-  -- ^ Base URL for the OAuth server
-  , oauth_port :: Int
-  -- ^ Port for the OAuth server
-  , login_form_renderer :: LoginFormParams -> Html
-  -- ^ Render the authorization login form.  Use 'defaultLoginFormRenderer'
-  -- from "Web.OAuth2.AuthorizeAPI" for the built-in page, or supply your
-  -- own function.
-  }
+    { auth_codes :: Map.Map Text (AuthCode usr)
+    -- ^ Active authorization codes indexed by code value
+    , refresh_token_persistence :: RefreshTokenPersistence usr
+    -- ^ Persistence layer for refresh tokens
+    , registered_clients :: Map.Map Text RegisteredClient
+    -- ^ Registered clients indexed by client_idQ
+    , oauth_url :: Text
+    -- ^ Base URL for the OAuth server
+    , oauth_port :: Int
+    -- ^ Port for the OAuth server
+    , login_form_renderer :: LoginFormParams -> Html
+    {- ^ Render the authorization login form.  Use 'defaultLoginFormRenderer'
+    from "Web.OAuth2.AuthorizeAPI" for the built-in page, or supply your
+    own function.
+    -}
+    }
 
--- | Represents errors that can occur during the OAuth authentication process.
---
--- The 'OAuthError' type is used to capture and describe various error conditions
--- that may arise when handling OAuth flows, such as invalid credentials, expired tokens,
--- missing parameters, or network issues. Each constructor of this type provides
--- information about a specific kind of OAuth-related failure, which can be used
--- for error handling, logging, or user feedback.
+{- | Represents errors that can occur during the OAuth authentication process.
+
+The 'OAuthError' type is used to capture and describe various error conditions
+that may arise when handling OAuth flows, such as invalid credentials, expired tokens,
+missing parameters, or network issues. Each constructor of this type provides
+information about a specific kind of OAuth-related failure, which can be used
+for error handling, logging, or user feedback.
+-}
 data OAuthError = OAuthError
-  { error :: Text
-  , error_description :: Maybe Text
-  , error_uri :: Maybe Text
-  }
-  deriving (Generic)
+    { error :: Text
+    , error_description :: Maybe Text
+    , error_uri :: Maybe Text
+    }
+    deriving (Generic)
 
 $( deriveJSON
     defaultOptions{omitNothingFields = True}
     ''OAuthError
  )
 
--- | Constructs an 'OAuthError' value with the given error message.
--- The resulting 'OAuthError' will have the provided error text,
--- and 'Nothing' for the optional description and URI fields.
+{- | Constructs an 'OAuthError' value with the given error message.
+The resulting 'OAuthError' will have the provided error text,
+and 'Nothing' for the optional description and URI fields.
+-}
 oAuthError :: Text -> OAuthError
 oAuthError err = OAuthError err Nothing Nothing
 
 -- | Attach an OAuthError JSON payload to a Servant ServerError.
 jsonErrorResponse :: ServerError -> OAuthError -> ServerError
 jsonErrorResponse base oauthErr =
-  let contentHeader = (hContentType, "application/json; charset=utf-8")
-      filteredHeaders = filter ((/= hContentType) . fst) (errHeaders base)
-  in  base
-        { errBody = encode oauthErr
-        , errHeaders = contentHeader : filteredHeaders
-        }
+    let contentHeader = (hContentType, "application/json; charset=utf-8")
+        filteredHeaders = filter ((/= hContentType) . fst) (errHeaders base)
+     in base
+            { errBody = encode oauthErr
+            , errHeaders = contentHeader : filteredHeaders
+            }
 
 -- | Convenience helper to build a JSON OAuth error response.
 oauthErrorResponse :: ServerError -> Text -> Maybe Text -> ServerError
 oauthErrorResponse base code description =
-  jsonErrorResponse base (oAuthError code){error_description = description}
+    jsonErrorResponse base (oAuthError code){error_description = description}
 
--- | Initialize an empty OAuth server state.
---
--- Creates a new OAuth state with no registered clients,
--- authorization codes, or refresh tokens.
-initOAuthState
-  :: forall usr
-   . Text
-  -> Int
-  -> RefreshTokenPersistence usr
-  -> (LoginFormParams -> Html)
-  -> OAuthState usr
+{- | Initialize an empty OAuth server state.
+
+Creates a new OAuth state with no registered clients,
+authorization codes, or refresh tokens.
+-}
+initOAuthState ::
+    forall usr.
+    Text ->
+    Int ->
+    RefreshTokenPersistence usr ->
+    (LoginFormParams -> Html) ->
+    OAuthState usr
 initOAuthState url port rtp renderer =
-  OAuthState
-    { auth_codes = Map.empty
-    , refresh_token_persistence = rtp
-    , registered_clients = Map.empty
-    , oauth_url = url
-    , oauth_port = port
-    , login_form_renderer = renderer
-    }
+    OAuthState
+        { auth_codes = Map.empty
+        , refresh_token_persistence = rtp
+        , registered_clients = Map.empty
+        , oauth_url = url
+        , oauth_port = port
+        , login_form_renderer = renderer
+        }
 
 -- | Type alias for token values (authorization codes, refresh tokens, client IDs).
 type Token = Text
 
--- | Generate a cryptographically secure random token.
---
--- Produces a Base64URL-encoded token derived from 32 bytes of
--- cryptographic entropy. The output is URL-safe and suitable for
--- use as authorization codes, refresh tokens, or client identifiers.
+{- | Generate a cryptographically secure random token.
+
+Produces a Base64URL-encoded token derived from 32 bytes of
+cryptographic entropy. The output is URL-safe and suitable for
+use as authorization codes, refresh tokens, or client identifiers.
+-}
 generateToken :: IO Token
 generateToken = do
-  bytes <- getRandomBytes 32
-  pure $ TE.decodeUtf8 (B64URL.encodeUnpadded bytes)
+    bytes <- getRandomBytes 32
+    pure $ TE.decodeUtf8 (B64URL.encodeUnpadded bytes)
 
 -- | Normalize the configured base URL ensuring the desired port is present.
 normalizeBaseUrl :: Text -> Int -> Text
 normalizeBaseUrl rawUrl port =
-  case parseURI (T.unpack rawUrl) of
-    Just uri ->
-      case uriAuthority uri of
-        Just auth ->
-          let hasPort = not (null (uriPort auth))
-              desiredPort = if port > 0 then ":" <> show port else ""
-              authWithPort =
-                if hasPort || null desiredPort
-                  then auth
-                  else auth{uriPort = desiredPort}
-              normalizedUri = uri{uriAuthority = Just authWithPort}
-          in  T.pack (uriToString id normalizedUri "")
+    case parseURI (T.unpack rawUrl) of
+        Just uri ->
+            case uriAuthority uri of
+                Just auth ->
+                    let hasPort = not (null (uriPort auth))
+                        desiredPort = if port > 0 then ":" <> show port else ""
+                        authWithPort =
+                            if hasPort || null desiredPort
+                                then auth
+                                else auth{uriPort = desiredPort}
+                        normalizedUri = uri{uriAuthority = Just authWithPort}
+                     in T.pack (uriToString id normalizedUri "")
+                Nothing -> appendPortFallback rawUrl port
         Nothing -> appendPortFallback rawUrl port
-    Nothing -> appendPortFallback rawUrl port
   where
     appendPortFallback :: Text -> Int -> Text
     appendPortFallback url port' =
-      let portTxt = ":" <> T.pack (show port')
-      in  if port' <= 0 || portTxt `T.isInfixOf` url
-            then url
-            else
-              let (prefix, suffix) = T.breakOn "/" url
-              in  if T.null suffix
-                    then url <> portTxt
-                    else prefix <> portTxt <> suffix
+        let portTxt = ":" <> T.pack (show port')
+         in if port' <= 0 || portTxt `T.isInfixOf` url
+                then url
+                else
+                    let (prefix, suffix) = T.breakOn "/" url
+                     in if T.null suffix
+                            then url <> portTxt
+                            else prefix <> portTxt <> suffix
 
 -- | Remove any trailing '/' from a URL.
 stripTrailingSlash :: Text -> Text
@@ -292,27 +303,28 @@ stripTrailingSlash = T.dropWhileEnd (== '/')
 -- | Append a path segment to a base URL, preserving fragments.
 appendPathSegment :: Text -> Text -> Text
 appendPathSegment base segment =
-  let (baseWithoutFragment, fragmentPart) = T.breakOn "#" base
-      baseStripped =
-        if T.null baseWithoutFragment
-          then baseWithoutFragment
-          else T.dropWhileEnd (== '/') baseWithoutFragment
-      combined = baseStripped <> segment
-  in  combined <> fragmentPart
+    let (baseWithoutFragment, fragmentPart) = T.breakOn "#" base
+        baseStripped =
+            if T.null baseWithoutFragment
+                then baseWithoutFragment
+                else T.dropWhileEnd (== '/') baseWithoutFragment
+        combined = baseStripped <> segment
+     in combined <> fragmentPart
 
--- | Constant-time equality comparison for Text values.
---
--- Prevents timing side-channel attacks when comparing secrets,
--- tokens, or other security-sensitive strings.
+{- | Constant-time equality comparison for Text values.
+
+Prevents timing side-channel attacks when comparing secrets,
+tokens, or other security-sensitive strings.
+-}
 constTimeEq :: Text -> Text -> Bool
 constTimeEq a b = BA.constEq (TE.encodeUtf8 a) (TE.encodeUtf8 b)
 
 -- | Class for verifying user credentials from username and password
 class FormAuth usr where
-  type FormAuthSettings usr
-  runFormAuth
-    :: (HasContextEntry ctxt (FormAuthSettings usr))
-    => Context ctxt
-    -> Text
-    -> Text
-    -> IO (AuthResult usr)
+    type FormAuthSettings usr
+    runFormAuth ::
+        (HasContextEntry ctxt (FormAuthSettings usr)) =>
+        Context ctxt ->
+        Text ->
+        Text ->
+        IO (AuthResult usr)
