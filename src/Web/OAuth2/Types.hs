@@ -10,7 +10,7 @@
 -- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
 --
--- Core types and data structures for the DPella OAuth 2.1 implementation.
+-- Core types and data structures for the OAuth 2.1 implementation.
 --
 -- This module defines the fundamental types used throughout the OAuth system:
 -- * Authorization codes with expiry and PKCE parameters

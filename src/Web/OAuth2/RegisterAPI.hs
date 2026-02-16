@@ -10,11 +10,11 @@
 -- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
 --
--- OAuth 2.1 Dynamic Client Registration for DPella.
+-- OAuth 2.1 Dynamic Client Registration (RFC 7591).
 --
 -- This module implements dynamic client registration as defined in RFC 7591.
 -- It allows OAuth clients to register themselves programmatically with the
--- DPella authorization server.
+-- authorization server.
 --
 -- Registered clients receive a unique client_id that must be used in all
 -- subsequent OAuth flows. The registration process collects client metadata

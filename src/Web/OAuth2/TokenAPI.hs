@@ -12,7 +12,7 @@
 -- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
 --
--- OAuth 2.1 Token Endpoint for DPella.
+-- OAuth 2.1 Token Endpoint.
 --
 -- This module implements the OAuth 2.1 token endpoint that exchanges
 -- authorization codes for access tokens and handles refresh token requests.
@@ -20,7 +20,7 @@
 -- The implementation supports:
 -- * Authorization code grant with PKCE verification
 -- * Refresh token grant for obtaining new access tokens
--- * JWT-based access tokens signed by DPella
+-- * JWT-based access tokens signed by the server
 --
 -- All tokens are validated against the registered client information
 -- and PKCE challenges when applicable.
@@ -128,7 +128,7 @@ type TokenResponseHeaders = Headers '[Header "Cache-Control" Text, Header "Pragm
 -- 2. Verifies client_id matches
 -- 3. Issues a new JWT access token
 --
--- Access tokens are JWTs signed by DPella with 1-hour expiry.
+-- Access tokens are JWTs signed by the server with 1-hour expiry.
 -- Authorization codes expire after 10 minutes.
 handleTokenRequest
   :: forall usr ctxt

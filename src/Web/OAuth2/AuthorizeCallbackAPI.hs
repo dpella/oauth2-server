@@ -12,7 +12,7 @@
 -- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
 --
--- OAuth 2.1 Authorization Callback Handler for DPella.
+-- OAuth 2.1 Authorization Callback Handler.
 --
 -- This module handles the POST callback from the authorization login form.
 -- It validates user credentials, generates authorization codes, and redirects
@@ -92,7 +92,7 @@ type AuthorizeCallbackAPI =
 --
 -- This function:
 --
--- 1. Validates the user's credentials against the DPella authentication system
+-- 1. Validates the user's credentials against the configured authentication backend
 -- 2. If successful, generates a new authorization code with 10-minute expiry
 -- 3. Stores the authorization code with associated PKCE parameters
 -- 4. Redirects the user back to the client with the authorization code

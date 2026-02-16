@@ -37,7 +37,7 @@ import Web.OAuth2.Types
 -- | OAuth 2.1 Authorization Server Metadata structure.
 --
 -- This structure contains all the metadata fields defined in RFC 8414
--- that are relevant for the DPella OAuth implementation.
+-- that are relevant for this OAuth implementation.
 data OAuthMetadata = OAuthMetadata
   { issuer :: Text
   -- ^ The authorization server's issuer identifier
@@ -71,7 +71,7 @@ type MetadataAPI = ".well-known" :> "oauth-authorization-server" :> Get '[JSON] 
 -- | Handle requests for OAuth server metadata.
 --
 -- Returns a JSON object describing the capabilities and endpoints
--- of the DPella OAuth authorization server. The metadata includes:
+-- of the OAuth authorization server. The metadata includes:
 --
 -- * Server issuer URL constructed from base URL and port
 -- * All OAuth endpoints (authorize, token, register)

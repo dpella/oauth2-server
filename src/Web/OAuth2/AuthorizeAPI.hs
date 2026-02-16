@@ -9,12 +9,12 @@
 -- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
 --
---  OAuth 2.1 Authorization Endpoint implementation for DPella.
+-- OAuth 2.1 Authorization Endpoint.
 --
 -- This module implements the OAuth 2.1 authorization endpoint that handles
 -- the initial step of the authorization code flow. It presents a login form
--- to users and validates their credentials against the DPella authentication
--- system.
+-- to users and validates their credentials against the configured authentication
+-- backend.
 --
 -- The authorization flow follows RFC 6749 with PKCE (RFC 7636) support for
 -- enhanced security in public clients.
@@ -139,7 +139,7 @@ handleAuthorize
     login_form :: Text -> Text -> H.Html
     login_form clientId redirectUri = H.docTypeHtml $ do
       H.head $ do
-        H.title "DPella OAuth Login"
+        H.title "OAuth Login"
         H.style $
           H.toHtml $
             T.unlines
@@ -155,8 +155,8 @@ handleAuthorize
               ]
       H.body $ do
         H.div H.! A.class_ "login-box" $ do
-          H.img H.! A.src "/static/logo.png" H.! A.alt "DPella Logo" H.! A.class_ "logo"
-          H.h2 "DPella"
+          H.img H.! A.src "/static/logo.png" H.! A.alt "Logo" H.! A.class_ "logo"
+          H.h2 "Sign In"
           case error_msg of
             Just "invalid_password" -> H.div H.! A.class_ "error-message" $ "Invalid username or password"
             Just err -> H.div H.! A.class_ "error-message" $ H.toHtml err
