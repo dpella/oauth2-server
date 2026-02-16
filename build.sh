@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE_NAME="oauth-server-build:latest"
+IMAGE_NAME="oauth2-server-build:latest"
 ARTIFACTS_DIR="./artifacts"
 
 # Build the Docker image

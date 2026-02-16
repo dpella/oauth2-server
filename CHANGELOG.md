@@ -36,10 +36,13 @@
 
 ## Changed
 - Source module headers now declare the MPL-2.0 license to match the package manifest.
-- Added `Web.OAuth.Internal` to expose a stable-for-tests surface so the test suite can target internals without compiling the entire source tree.
+- Added `Web.OAuth2.Internal` to expose a stable-for-tests surface so the test suite can target internals without compiling the entire source tree.
 - Restored the full suite of OAuth endpoint tests, including end-to-end flow coverage, after they were accidentally dropped during the namespace migration.
 
 # 0.2.0.0
 ## Changed
 - Renamed the exposed module hierarchy from `OAuth` to `Web.OAuth`.
 - Updated package metadata and documentation to reflect the new namespace.
+
+# 0.1.0.0
+- Initial release.

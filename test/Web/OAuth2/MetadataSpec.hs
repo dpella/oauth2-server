@@ -1,7 +1,7 @@
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Web.OAuth.MetadataSpec (tests) where
+module Web.OAuth2.MetadataSpec (tests) where
 
 import Control.Concurrent.MVar (MVar, modifyMVar_)
 import Data.Aeson (Value (..), eitherDecode)
@@ -13,8 +13,8 @@ import Network.Wai (Application)
 import Network.Wai.Test
 import Test.Tasty
 import Test.Tasty.HUnit
-import Web.OAuth.TestUtils
-import Web.OAuth.Types
+import Web.OAuth2.TestUtils
+import Web.OAuth2.Types
 
 tests :: TestTree
 tests =

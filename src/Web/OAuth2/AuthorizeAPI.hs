@@ -4,7 +4,7 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- |
--- Module:      Web.OAuth.AuthorizeAPI
+-- Module:      Web.OAuth2.AuthorizeAPI
 -- Copyright:   (c) DPella AB 2025
 -- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
@@ -18,7 +18,7 @@
 --
 -- The authorization flow follows RFC 6749 with PKCE (RFC 7636) support for
 -- enhanced security in public clients.
-module Web.OAuth.AuthorizeAPI where
+module Web.OAuth2.AuthorizeAPI where
 
 import Control.Concurrent.MVar
 import Control.Monad (forM_)
@@ -29,7 +29,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Network.URI (escapeURIString, isUnescapedInURIComponent)
-import Web.OAuth.Types
+import Web.OAuth2.Types
 import Servant
 import Servant.HTML.Blaze
 import Text.Blaze.Html5 qualified as H

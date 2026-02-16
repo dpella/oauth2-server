@@ -4,7 +4,7 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- |
--- Module:      Web.OAuth.MetadataAPI
+-- Module:      Web.OAuth2.MetadataAPI
 -- Copyright:   (c) DPella AB 2025
 -- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
@@ -21,7 +21,7 @@
 -- * Authentication methods
 -- * PKCE support
 -- * Available scopes
-module Web.OAuth.MetadataAPI where
+module Web.OAuth2.MetadataAPI where
 
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class (liftIO)
@@ -32,7 +32,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import GHC.Generics
 import Servant
-import Web.OAuth.Types
+import Web.OAuth2.Types
 
 -- | OAuth 2.1 Authorization Server Metadata structure.
 --

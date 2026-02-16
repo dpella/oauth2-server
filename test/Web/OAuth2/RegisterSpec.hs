@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Web.OAuth.RegisterSpec (tests) where
+module Web.OAuth2.RegisterSpec (tests) where
 
 import Control.Concurrent.MVar (MVar, readMVar)
 import Data.Aeson
@@ -21,8 +21,8 @@ import Network.Wai (Application, requestHeaders, requestMethod)
 import Network.Wai.Test
 import Test.Tasty
 import Test.Tasty.HUnit
-import Web.OAuth.TestUtils
-import Web.OAuth.Types
+import Web.OAuth2.TestUtils
+import Web.OAuth2.Types
 
 tests :: TestTree
 tests =
@@ -413,7 +413,7 @@ rejectsEmptyRedirectUris = testCase "rejects registrations without redirect URIs
         )
     simpleStatus res @?= status400
     err <- decodeRegistrationError (simpleBody res)
-    Web.OAuth.Types.error err @?= "invalid_client_metadata"
+    Web.OAuth2.Types.error err @?= "invalid_client_metadata"
 
 registrationPath :: Text -> BS8.ByteString
 registrationPath clientId = BS8.concat ["/register/", TE.encodeUtf8 clientId]
@@ -441,7 +441,7 @@ rejectsUnsupportedAuthMethod = testCase "rejects token auth methods the server c
         )
     simpleStatus res @?= status400
     err <- decodeRegistrationError (simpleBody res)
-    Web.OAuth.Types.error err @?= "invalid_client_metadata"
+    Web.OAuth2.Types.error err @?= "invalid_client_metadata"
 
 rejectsRelativeRedirectUris :: TestTree
 rejectsRelativeRedirectUris = testCase "rejects non-absolute redirect URIs" $
@@ -456,7 +456,7 @@ rejectsRelativeRedirectUris = testCase "rejects non-absolute redirect URIs" $
         )
     simpleStatus res @?= status400
     err <- decodeRegistrationError (simpleBody res)
-    Web.OAuth.Types.error err @?= "invalid_client_metadata"
+    Web.OAuth2.Types.error err @?= "invalid_client_metadata"
 
 rejectsInsecureRedirectUris :: TestTree
 rejectsInsecureRedirectUris = testCase "rejects non-loopback http redirect URIs" $
@@ -471,7 +471,7 @@ rejectsInsecureRedirectUris = testCase "rejects non-loopback http redirect URIs"
         )
     simpleStatus res @?= status400
     err <- decodeRegistrationError (simpleBody res)
-    Web.OAuth.Types.error err @?= "invalid_client_metadata"
+    Web.OAuth2.Types.error err @?= "invalid_client_metadata"
 
 acceptsExtendedLoopbackRedirects :: TestTree
 acceptsExtendedLoopbackRedirects = testCase "accepts any 127.0.0.0/8 redirect host" $

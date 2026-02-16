@@ -1,4 +1,4 @@
-packages: oauth-server.cabal
+packages: oauth2-server.cabal
 
 
 -- GHC version

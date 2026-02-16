@@ -8,5 +8,5 @@ cabal sdist
 read -p "Username: " username
 read -sp "Password: " password
 
-cabal upload $1 -u "$username" -p "$password" dist-newstyle/sdist/oauth-server-*.tar.gz
-cabal upload $1 -d -u "$username" -p "$password" dist-newstyle/oauth-server-*-docs.tar.gz
+cabal upload $1 -u "$username" -p "$password" dist-newstyle/sdist/oauth2-server-*.tar.gz
+cabal upload $1 -d -u "$username" -p "$password" dist-newstyle/oauth2-server-*-docs.tar.gz

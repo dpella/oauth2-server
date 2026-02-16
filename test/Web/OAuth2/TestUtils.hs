@@ -9,7 +9,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Web.OAuth.TestUtils
+module Web.OAuth2.TestUtils
   ( -- * Shared fixtures
     TestUser (..)
   , testUser
@@ -50,8 +50,8 @@ import Network.Wai (Application)
 import Servant (Context (EmptyContext, (:.)), Handler, Proxy (..), ServerError, serveWithContext)
 import Servant.Auth.Server
 import Servant.Server.Internal.Handler qualified as Internal
-import Web.OAuth
-import Web.OAuth.Types
+import Web.OAuth2
+import Web.OAuth2.Types
 
 data TestUser = TestUser
   { userId :: Text

@@ -38,7 +38,7 @@ build-depends:
   , text
   , aeson
   , containers
-  , oauth-server  -- this package
+  , oauth2-server  -- this package
 ```
 
 This project targets GHC 9.12 (see `cabal.project`).
@@ -63,8 +63,8 @@ import Network.Wai (Application)
 import Network.Wai.Handler.Warp (run)
 import Servant
 import Servant.Auth.Server
-import Web.OAuth (OAuthAPI, oAuthAPI)
-import Web.OAuth.Types
+import Web.OAuth2 (OAuthAPI, oAuthAPI)
+import Web.OAuth2.Types
 
 -- Your application user type and JWT instances
 data User = User { userId :: Text } deriving (Show, Generic)

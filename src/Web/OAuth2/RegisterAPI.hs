@@ -5,7 +5,7 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- |
--- Module:      Web.OAuth.RegisterAPI
+-- Module:      Web.OAuth2.RegisterAPI
 -- Copyright:   (c) DPella AB 2025
 -- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
@@ -19,7 +19,7 @@
 -- Registered clients receive a unique client_id that must be used in all
 -- subsequent OAuth flows. The registration process collects client metadata
 -- including redirect URIs, grant types, and requested scopes.
-module Web.OAuth.RegisterAPI where
+module Web.OAuth2.RegisterAPI where
 
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class (liftIO)
@@ -32,7 +32,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import GHC.Generics
 import Network.URI qualified as URI
-import Web.OAuth.Types
+import Web.OAuth2.Types
 import Servant
 import Text.Read (readMaybe)
 
@@ -195,6 +195,7 @@ handleRegister state_var request@ClientRegistrationRequest{..} = do
         pure (updatedState, responseValue)
   pure response
 
+-- | Retrieve metadata for an existing client registration (RFC 7592).
 handleRegistrationGet
   :: forall usr
    . MVar (OAuthState usr)
@@ -207,6 +208,7 @@ handleRegistrationGet state_var clientId mAuth = do
   let registrationUri = appendPathSegment (stripTrailingSlash baseUrl) ("/register/" <> clientId)
   pure $ buildRegistrationResponse registrationUri managementToken client
 
+-- | Update metadata for an existing client registration (RFC 7592).
 handleRegistrationUpdate
   :: forall usr
    . MVar (OAuthState usr)
@@ -252,6 +254,7 @@ handleRegistrationUpdate state_var clientId mAuth request@ClientRegistrationRequ
                     pure (newState, Right responseValue)
   either throwError pure result
 
+-- | Remove an existing client registration (RFC 7592).
 handleRegistrationDelete
   :: forall usr
    . MVar (OAuthState usr)

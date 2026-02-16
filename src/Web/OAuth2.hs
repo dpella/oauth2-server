@@ -2,7 +2,7 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- |
--- Module:      Web.OAuth
+-- Module:      Web.OAuth2
 -- Copyright:   (c) DPella AB 2025
 -- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
@@ -12,15 +12,15 @@
 -- This module combines all OAuth endpoints into a single API type
 -- and provides the server implementation that routes requests to
 -- the appropriate handlers.
-module Web.OAuth (OAuthAPI, oAuthAPI, mkDefaultRefreshTokenPersistence) where
+module Web.OAuth2 (OAuthAPI, oAuthAPI, mkDefaultRefreshTokenPersistence) where
 
 import Control.Concurrent.MVar (MVar)
-import Web.OAuth.AuthorizeAPI
-import Web.OAuth.AuthorizeCallbackAPI
-import Web.OAuth.MetadataAPI
-import Web.OAuth.RegisterAPI
-import Web.OAuth.TokenAPI
-import Web.OAuth.Types
+import Web.OAuth2.AuthorizeAPI
+import Web.OAuth2.AuthorizeCallbackAPI
+import Web.OAuth2.MetadataAPI
+import Web.OAuth2.RegisterAPI
+import Web.OAuth2.TokenAPI
+import Web.OAuth2.Types
 import Servant
 import Servant.Auth.Server
 

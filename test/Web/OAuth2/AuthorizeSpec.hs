@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Web.OAuth.AuthorizeSpec (tests) where
+module Web.OAuth2.AuthorizeSpec (tests) where
 
 import Control.Concurrent.MVar (MVar)
 import Data.Aeson (eitherDecode)
@@ -16,9 +16,9 @@ import Network.Wai (Application)
 import Network.Wai.Test
 import Test.Tasty
 import Test.Tasty.HUnit
-import Web.OAuth.TestUtils
-import Web.OAuth.Types hiding (error)
-import Web.OAuth.Types qualified as OAuthTypes
+import Web.OAuth2.TestUtils
+import Web.OAuth2.Types hiding (error)
+import Web.OAuth2.Types qualified as OAuthTypes
 
 tests :: TestTree
 tests =

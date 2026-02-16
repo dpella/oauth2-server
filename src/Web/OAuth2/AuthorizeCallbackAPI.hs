@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- |
--- Module:      Web.OAuth.AuthorizeCallbackAPI
+-- Module:      Web.OAuth2.AuthorizeCallbackAPI
 -- Copyright:   (c) DPella AB 2025
 -- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
@@ -20,7 +20,7 @@
 --
 -- The module implements PKCE (Proof Key for Code Exchange) support as defined
 -- in RFC 7636 to protect against authorization code interception attacks.
-module Web.OAuth.AuthorizeCallbackAPI where
+module Web.OAuth2.AuthorizeCallbackAPI where
 
 import Control.Concurrent.MVar
 import Control.Monad (unless)
@@ -32,13 +32,13 @@ import Data.Text.Encoding qualified as TE
 import Data.Time.Clock
 import GHC.Generics
 import Network.URI (escapeURIString, isUnescapedInURIComponent)
-import Web.OAuth.Types
+import Web.OAuth2.Types
 import Servant
 import Servant.Auth.Server (AuthResult (..))
 import Servant.HTML.Blaze
 import Text.Blaze.Html5 (Html)
 import Web.FormUrlEncoded (FromForm (..), parseMaybe, parseUnique)
-import Web.OAuth.AuthorizeAPI (validateScope)
+import Web.OAuth2.AuthorizeAPI (validateScope)
 
 -- | Form data submitted from the OAuth login page.
 --

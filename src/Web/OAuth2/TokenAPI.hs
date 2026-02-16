@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeOperators #-}
 
 -- |
--- Module:      Web.OAuth.TokenAPI
+-- Module:      Web.OAuth2.TokenAPI
 -- Copyright:   (c) DPella AB 2025
 -- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
@@ -24,7 +24,7 @@
 --
 -- All tokens are validated against the registered client information
 -- and PKCE challenges when applicable.
-module Web.OAuth.TokenAPI where
+module Web.OAuth2.TokenAPI where
 
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class (liftIO)
@@ -40,7 +40,7 @@ import Data.Text qualified as T
 import Data.Text.Encoding qualified as T
 import Data.Time.Clock
 import GHC.Generics
-import Web.OAuth.Types
+import Web.OAuth2.Types
 import Servant
 import Servant.Auth.Server
 import Web.FormUrlEncoded (FromForm (..))
@@ -110,9 +110,12 @@ instance ToJSON TokenResponse where
         <> ["refresh_token" .= rt | Just rt <- [refresh_token_resp]]
         <> ["scope" .= s | Just s <- [scope]]
 
+type TokenResponseHeaders = Headers '[Header "Cache-Control" Text, Header "Pragma" Text] TokenResponse
+
 -- | Handle OAuth token requests for both authorization code and refresh token grants.
 --
 -- For authorization code grant:
+--
 -- 1. Validates the authorization code exists and hasn't expired
 -- 2. Verifies client_id and redirect_uri match the authorization request
 -- 3. Validates PKCE code_verifier if code_challenge was used
@@ -120,14 +123,13 @@ instance ToJSON TokenResponse where
 -- 5. Deletes the used authorization code
 --
 -- For refresh token grant:
+--
 -- 1. Validates the refresh token exists
 -- 2. Verifies client_id matches
 -- 3. Issues a new JWT access token
 --
 -- Access tokens are JWTs signed by DPella with 1-hour expiry.
 -- Authorization codes expire after 10 minutes.
-type TokenResponseHeaders = Headers '[Header "Cache-Control" Text, Header "Pragma" Text] TokenResponse
-
 handleTokenRequest
   :: forall usr ctxt
    . (ToJWT usr, HasContextEntry ctxt JWTSettings)

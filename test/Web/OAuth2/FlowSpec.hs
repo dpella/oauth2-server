@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Web.OAuth.FlowSpec (tests) where
+module Web.OAuth2.FlowSpec (tests) where
 
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -29,9 +29,9 @@ import Network.Wai.Test
 import Servant
 import Test.Tasty
 import Test.Tasty.HUnit
-import Web.OAuth (OAuthAPI, oAuthAPI)
-import Web.OAuth.TestUtils
-import Web.OAuth.Types
+import Web.OAuth2 (OAuthAPI, oAuthAPI)
+import Web.OAuth2.TestUtils
+import Web.OAuth2.Types
 
 tests :: TestTree
 tests = testGroup "OAuth End-to-End Flow" [commonFlow]

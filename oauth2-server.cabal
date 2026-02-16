@@ -1,5 +1,5 @@
 cabal-version:      2.2
-name:               oauth-server
+name:               oauth2-server
 version:            0.2.1.0
 license:            MPL-2.0
 license-file:       LICENSE
@@ -16,13 +16,13 @@ description:
   secure token generation helpers. Combined servers share state through `MVar`s,
   integrate with `servant-auth-server` to mint JWT access tokens, and expose ergonomic
   helpers for embedding standards-compliant OAuth flows into Haskell applications.
-homepage:          https://github.com/DPella/oauth-server
-bug-reports:       https://github.com/DPella/oauth-server/issues
+homepage:          https://github.com/DPella/oauth2-server
+bug-reports:       https://github.com/DPella/oauth2-server/issues
 category:          Web, Security
 
 source-repository head
   type:     git
-  location: https://github.com/DPella/oauth-server.git
+  location: https://github.com/DPella/oauth2-server.git
 
 library
   default-language:
@@ -42,15 +42,15 @@ library
   hs-source-dirs:
     src
   exposed-modules:
-    Web.OAuth
-    Web.OAuth.Types
-    Web.OAuth.Internal
+    Web.OAuth2
+    Web.OAuth2.Types
+    Web.OAuth2.Internal
   other-modules:
-    Web.OAuth.TokenAPI
-    Web.OAuth.AuthorizeAPI
-    Web.OAuth.AuthorizeCallbackAPI
-    Web.OAuth.RegisterAPI
-    Web.OAuth.MetadataAPI
+    Web.OAuth2.TokenAPI
+    Web.OAuth2.AuthorizeAPI
+    Web.OAuth2.AuthorizeCallbackAPI
+    Web.OAuth2.RegisterAPI
+    Web.OAuth2.MetadataAPI
   build-depends:
       base >=4.18 && <4.22
     , servant
@@ -73,7 +73,7 @@ library
     , transformers
 
 
-test-suite test-oauth-server
+test-suite test-oauth2-server
   type: exitcode-stdio-1.0
   default-language:
     Haskell2010
@@ -93,16 +93,16 @@ test-suite test-oauth-server
   main-is:
     Main.hs
   other-modules:
-    Web.OAuth.AuthorizeCallbackSpec
-    Web.OAuth.AuthorizeSpec
-    Web.OAuth.FlowSpec
-    Web.OAuth.MetadataSpec
-    Web.OAuth.RegisterSpec
-    Web.OAuth.TestUtils
-    Web.OAuth.TokenSpec
+    Web.OAuth2.AuthorizeCallbackSpec
+    Web.OAuth2.AuthorizeSpec
+    Web.OAuth2.FlowSpec
+    Web.OAuth2.MetadataSpec
+    Web.OAuth2.RegisterSpec
+    Web.OAuth2.TestUtils
+    Web.OAuth2.TokenSpec
   build-depends:
       base >=4.18 && <4.22
-    , oauth-server
+    , oauth2-server
     , aeson
     , text
     , bytestring

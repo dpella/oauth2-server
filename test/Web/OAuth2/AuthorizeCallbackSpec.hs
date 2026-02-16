@@ -1,7 +1,7 @@
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Web.OAuth.AuthorizeCallbackSpec (tests) where
+module Web.OAuth2.AuthorizeCallbackSpec (tests) where
 
 import Control.Concurrent.MVar (MVar, readMVar)
 import Data.Aeson (eitherDecode)
@@ -15,8 +15,8 @@ import Network.Wai (Application, requestHeaders, requestMethod)
 import Network.Wai.Test
 import Test.Tasty
 import Test.Tasty.HUnit
-import Web.OAuth.TestUtils
-import Web.OAuth.Types
+import Web.OAuth2.TestUtils
+import Web.OAuth2.Types
 
 tests :: TestTree
 tests =
@@ -141,7 +141,7 @@ rejectsTamperedRedirectUri = testCase "rejects redirect_uri not registered for c
     simpleStatus res @?= status400
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     err <- decodeError (simpleBody res)
-    Web.OAuth.Types.error err @?= "unauthorized_client"
+    Web.OAuth2.Types.error err @?= "unauthorized_client"
     st <- readMVar stateVar
     Map.size (auth_codes st) @?= 0
 
@@ -170,7 +170,7 @@ rejectsInvalidScope = testCase "rejects scope escalation attempts" $
     simpleStatus res @?= status400
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     err <- decodeError (simpleBody res)
-    Web.OAuth.Types.error err @?= "invalid_scope"
+    Web.OAuth2.Types.error err @?= "invalid_scope"
     st <- readMVar stateVar
     Map.size (auth_codes st) @?= 0
 
@@ -197,7 +197,7 @@ rejectsMissingPkce = testCase "rejects requests missing PKCE code_challenge" $
     simpleStatus res @?= status400
     lookup hContentType (simpleHeaders res) @?= Just "application/json; charset=utf-8"
     err <- decodeError (simpleBody res)
-    Web.OAuth.Types.error err @?= "invalid_request"
+    Web.OAuth2.Types.error err @?= "invalid_request"
     st <- readMVar stateVar
     Map.size (auth_codes st) @?= 0
 

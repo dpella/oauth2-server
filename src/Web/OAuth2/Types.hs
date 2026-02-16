@@ -5,7 +5,7 @@
 {-# LANGUAGE TypeFamilies #-}
 
 -- |
--- Module:      Web.OAuth.Types
+-- Module:      Web.OAuth2.Types
 -- Copyright:   (c) DPella AB 2025
 -- License:     MPL-2.0
 -- Maintainer:  <matti@dpella.io>, <lobo@dpella.io>
@@ -20,7 +20,7 @@
 --
 -- The types support the OAuth 2.1 authorization code flow with PKCE
 -- as defined in RFC 6749 and RFC 7636.
-module Web.OAuth.Types where
+module Web.OAuth2.Types where
 
 import Control.Concurrent.MVar (modifyMVar_, newMVar, readMVar)
 import Data.Aeson (defaultOptions, encode, omitNothingFields)
